@@ -1,19 +1,26 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { Limits, Net, Row, Snapshot, StyleId } from '../types'
+import type { BlockId, LangId, Layout, Limits, Net, Row, RowState, Snapshot, StyleId } from '../types'
 
 const PANE = 'session-pult'
-const TITLE = 'Пульт сессий'
+// Язык панели: обе подписи стоят прямо в месте вывода, чтобы не расходились
+let LANG: LangId = 'ru'
+const t = (ru: string, en: string) => (LANG === 'en' ? en : ru)
+const title = () => t('Пульт сессий', 'Session Pult')
 const REFRESH_MS = 90_000
 // Страна и скорость: замер расходует трафик, поэтому редко и один на все сессии
 const NET_EVERY_MS = 30 * 60_000
 const HEAVY_CTX = 300_000
 // Python 3 для сборщика: сначала лаунчер py с python.org, затем то, что найдётся в PATH
 const PYTHONS = [['py', '-3'], ['python'], ['python3']]
-const NO_PYTHON =
-  'Графики по всем сессиям строит Python 3, он не найден. Установите его с python.org с галочкой «Add python.exe to PATH». ' +
-  'Кольца лимитов и кнопки работают и без него.'
+const noPython = () =>
+  t(
+    'Графики по всем сессиям строит Python 3, он не найден. Установите его с python.org с галочкой «Add python.exe to PATH». ' +
+      'Кольца лимитов и кнопки работают и без него.',
+    'Charts across all sessions need Python 3, which was not found. Install it from python.org with "Add python.exe to PATH" ticked. ' +
+      'Limit rings and buttons work without it.',
+  )
 
 // Сменить тег, если поменялись поля: старое значение из прошлой версии будет отклонено
 const snap = atom({ plugin: 'session-pult', key: 'snap' } as const, null, { shape: 'snap-5' })
@@ -24,31 +31,61 @@ const lastTurnAt = atom({ plugin: 'session-pult', key: 'lastTurnAt' } as const, 
 const turnRunning = atom({ plugin: 'session-pult', key: 'turnRunning' } as const, false, { shape: 'turn-running-1' })
 const coldHidden = atom({ plugin: 'session-pult', key: 'coldHidden' } as const, null, { shape: 'cold-hidden-1' })
 const pendingClear = atom({ plugin: 'session-pult', key: 'pendingClear' } as const, null, { shape: 'pending-clear-1' })
-const replyTo = atom({ plugin: 'session-pult', key: 'replyTo' } as const, null, { shape: 'reply-to-1' })
 const style = atom({ plugin: 'session-pult', key: 'style' } as const, 'gold', { shape: 'style-1' })
 const net = atom({ plugin: 'session-pult', key: 'net' } as const, null, { shape: 'net-1' })
+const lang = atom({ plugin: 'session-pult', key: 'lang' } as const, 'ru', { shape: 'lang-1' })
+// Блоки панели в исходном порядке
+const BLOCKS: { id: BlockId; label: string; en: string }[] = [
+  { id: 'gauges', label: 'Лимиты', en: 'Limits' },
+  { id: 'actions', label: 'Кнопки', en: 'Actions' },
+  { id: 'forecast', label: '5 часов', en: '5 hours' },
+  { id: 'week', label: 'Неделя', en: 'Week' },
+  { id: 'sessions', label: 'Сессии', en: 'Sessions' },
+  { id: 'hours', label: 'По часам', en: 'By hour' },
+  { id: 'spend', label: 'Модели', en: 'Models' },
+]
+const FIRST_LAYOUT: Layout = { order: BLOCKS.map(b => b.id), folded: [], closed: [] }
+const layout = atom({ plugin: 'session-pult', key: 'layout' } as const, FIRST_LAYOUT, { shape: 'layout-1' })
+// Режим настройки: над каждым блоком его кнопки
+const arranging = atom({ plugin: 'session-pult', key: 'arranging' } as const, false, { shape: 'arranging-1' })
 
 // Что кнопки отправляют от имени пользователя. Тексты самодостаточные: не опираются на чужие CLAUDE.md,
 // а агентов и скиллы называют только как необязательные
-const MEMORY_MARK = 'Перед очисткой контекста сохрани память проекта'
-const ASKS = {
-  status:
+const MEMORY_MARKS = ['Перед очисткой контекста сохрани память проекта', 'Before clearing the context, save the project memory']
+const asks = () => ({
+  status: t(
     'Статус сессии, кратко, четырьмя блоками: выполнено (с результатами), не получилось и почему, ' +
-    'в процессе, осталось (с оценкой времени). Ничего нового не начинай.',
-  report:
+      'в процессе, осталось (с оценкой времени). Ничего нового не начинай.',
+    'Session status, briefly, in four blocks: done (with results), failed and why, ' +
+      'in progress, remaining (with a time estimate). Do not start anything new.',
+  ),
+  report: t(
     'Итоговый отчёт по последней задаче в 4 пунктах: задача; решена ли, с цифрами и фактами; ' +
-    'почему решение оптимально и какую альтернативу отвергли; как было и как стало.',
-  check:
+      'почему решение оптимально и какую альтернативу отвергли; как было и как стало.',
+    'Final report on the last task in 4 points: the task; whether it is solved, with figures and facts; ' +
+      'why the solution is optimal and which alternative was rejected; before and after.',
+  ),
+  check: t(
     'Проверь последний результат перед отправкой: цифры против источников, арифметику, логику выводов, ' +
-    'опечатки, следы ИИ в тексте. Если есть агент editor-qa или скилл humanizer-ru-pro, используй их. ' +
-    'Блокеры исправь, остальные замечания перечисли.',
-  memory:
-    `${MEMORY_MARK}: запиши в PROJECT_MEMORY.md в корне проекта (если есть скилл project-memory, через него) ` +
-    'цель, что сделано, решения и почему, пути к файлам, что осталось. Ответь одной строкой.',
-  resume:
-    'Контекст очищен кнопкой «Новый лист». Если памяти проекта ещё нет в контексте, прочитай PROJECT_MEMORY.md ' +
-    'в корне проекта. Ответь одной строкой, на чём остановились.',
-}
+      'опечатки, следы ИИ в тексте. Если есть агент editor-qa или скилл humanizer-ru-pro, используй их. ' +
+      'Блокеры исправь, остальные замечания перечисли.',
+    'Check the last result before it goes out: figures against sources, arithmetic, logic of the conclusions, ' +
+      'typos, traces of AI in the text. If an editor-qa agent or a humanizer skill exists, use it. ' +
+      'Fix blockers and list the other remarks.',
+  ),
+  memory: t(
+    `${MEMORY_MARKS[0]}: запиши в PROJECT_MEMORY.md в корне проекта (если есть скилл project-memory, через него) ` +
+      'цель, что сделано, решения и почему, пути к файлам, что осталось. Ответь одной строкой.',
+    `${MEMORY_MARKS[1]}: write to PROJECT_MEMORY.md in the project root (through the project-memory skill if there is one) ` +
+      'the goal, what is done, decisions and why, file paths, what is left. Answer in one line.',
+  ),
+  resume: t(
+    'Контекст очищен командой /new-sheet. Если памяти проекта ещё нет в контексте, прочитай PROJECT_MEMORY.md ' +
+      'в корне проекта. Ответь одной строкой, на чём остановились.',
+    'The context was cleared with /new-sheet. If the project memory is not in context yet, read PROJECT_MEMORY.md ' +
+      'in the project root. Answer in one line where we left off.',
+  ),
+})
 // Кэш промпта живёт час: после часа тишины весь контекст читается заново по цене записи
 const COLD_MIN = 60
 const WARN_MIN = 45
@@ -62,20 +99,24 @@ const ALERT_PCT = 80
 const FORECAST_FROM_PCT = 40
 // Об ожидании сообщаем только свежем: при запуске пульта старые строки не должны засыпать уведомлениями
 const WAIT_FRESH_MIN = 15
-// Получатель видит ответ как сообщение другой сессии, поэтому в тексте сказано, чей он
-const REPLY_MARK = 'Ответ пользователя из панели «Пульт сессий»:'
 
 // Что сводка сжатия обязана сохранить, чтобы работа шла дальше без переспросов
-const COMPACT_HINT =
-  'Пиши сводку по-русски. Сохрани: цель и текущую задачу; принятые решения и почему; ' +
-  'полные пути к файлам, которые меняли или читали; что сделано и что осталось; ' +
-  'ошибки и как их обошли; договорённости и запреты пользователя из этого разговора.'
+const compactHint = () =>
+  t(
+    'Пиши сводку по-русски. Сохрани: цель и текущую задачу; принятые решения и почему; ' +
+      'полные пути к файлам, которые меняли или читали; что сделано и что осталось; ' +
+      'ошибки и как их обошли; договорённости и запреты пользователя из этого разговора.',
+    'Write the summary in English. Keep: the goal and current task; decisions made and why; ' +
+      'full paths of files changed or read; what is done and what is left; ' +
+      'errors and how they were worked around; agreements and prohibitions from the user in this conversation.',
+  )
 
 // Оформления на выбор. Золото и Синий: один оттенок с градиентом металла, фон карточек внутри картинки,
 // вид не зависит от темы приложения. Цветной: статусы разными цветами, подстраивается под тему приложения
 type Look = {
   id: StyleId
   label: string
+  en: string
   // Цвет по уровню вместо градиента, без карточек
   flat: boolean
   // Фон всей панели; на нём подпись обычной кнопки сливается, поэтому нужны плотные кнопки
@@ -98,13 +139,14 @@ type Look = {
   glow: string
   ctx: string
   cold: string
-  status: Record<Row['status'], string>
+  status: Record<RowState, string>
   models: [string, string][]
 }
 
 const COLOR: Look = {
   id: 'color',
-  label: 'Цветной',
+  label: 'Цвет',
+  en: 'Color',
   flat: true,
   solid: false,
   ink: '#1f2328',
@@ -122,14 +164,15 @@ const COLOR: Look = {
   glow: 'transparent',
   ctx: '#3b82f6',
   cold: '#06b6d4',
-  status: { running: '#22c55e', waiting: '#f59e0b', limit: '#ef4444', stopped: '#94a3b8' },
+  status: { running: '#22c55e', waiting: '#f59e0b', attention: '#ef4444', stopped: '#94a3b8' },
   models: [['opus', '#8b5cf6'], ['sonnet', '#06b6d4'], ['haiku', '#22c55e'], ['fable', '#f59e0b']],
 }
 
-// «Золотой нуар»: золото единственная краска, зелёный только для плюсов, персик для тревоги, красного нет
+// «Золотой нуар»: золото единственная краска, зелёный только для плюсов, персик для тревоги; красный только у строки, требующей внимания
 const GOLD: Look = {
   id: 'gold',
   label: 'Золото',
+  en: 'Gold',
   flat: false,
   page: '#141317',
   solid: true,
@@ -149,7 +192,7 @@ const GOLD: Look = {
   glow: '#3A3222',
   ctx: '#E7C989',
   cold: '#D4AF6A',
-  status: { running: '#7FBF8E', waiting: '#E7C989', limit: '#E8A26B', stopped: '#9A938A' },
+  status: { running: '#7FBF8E', waiting: '#E7C989', attention: '#E5604D', stopped: '#9A938A' },
   models: [['opus', '#E7C989'], ['sonnet', '#8A6B33'], ['haiku', '#7FBF8E'], ['fable', '#E8A26B']],
 }
 
@@ -157,6 +200,7 @@ const GOLD: Look = {
 const BLUE: Look = {
   id: 'blue',
   label: 'Синий',
+  en: 'Blue',
   flat: false,
   solid: false,
   ink: '#0B1F4B',
@@ -174,18 +218,21 @@ const BLUE: Look = {
   glow: '#E3ECFF',
   ctx: '#0B4FD6',
   cold: '#0B4FD6',
-  status: { running: '#1F9D6B', waiting: '#0B4FD6', limit: '#E8590C', stopped: '#8A94A8' },
+  status: { running: '#1F9D6B', waiting: '#E5A100', attention: '#D92D20', stopped: '#8A94A8' },
   models: [['opus', '#002882'], ['sonnet', '#3D7BFF'], ['haiku', '#1F9D6B'], ['fable', '#E8590C']],
 }
 
 const LOOKS = [COLOR, GOLD, BLUE]
 
-const STATUS: Record<Row['status'], { label: string; short: string }> = {
-  running: { label: 'работает', short: 'работает' },
-  waiting: { label: 'ждёт вас', short: 'ждёт вас' },
-  limit: { label: 'лимит', short: 'лимит' },
-  stopped: { label: 'остановлена', short: 'стоп' },
+const STATUS: Record<Row['status'], { label: string; en: string }> = {
+  running: { label: 'работает', en: 'running' },
+  waiting: { label: 'ждёт вас', en: 'waiting' },
+  limit: { label: 'лимит', en: 'limit' },
+  stopped: { label: 'остановлена', en: 'stopped' },
 }
+const statusLabel = (s: Row['status']) => t(STATUS[s].label, STATUS[s].en)
+// Цвет строки: красный, если нужны вы, жёлтый, если ждёт, зелёный, если работает, серый, если остановлена
+const stateOf = (r: Row): RowState => (r.status === 'limit' || r.needs || r.urgent ? 'attention' : r.status)
 
 const styleOf = (c: Look) =>
   '<style>' +
@@ -210,16 +257,26 @@ function useLook(id: StyleId) {
   STYLE = styleOf(C)
 }
 
-// Ширина карточки и её содержимого; строка сессии уже, рядом с ней стоит кнопка статуса
+// Ширина карточки и её содержимого
 const OUT_W = 320
 const PAD_X = 12
 const PAD_Y = 10
 const W = OUT_W - PAD_X * 2
-const ROW_W = 196
+// Кнопки-картинки: w и h в точках, width их доля в ряду
+type Chip = { w: number; h: number; width: string }
+const STYLE_CHIP: Chip = { w: 62, h: 26, width: '20%' }
+const LANG_CHIP: Chip = { w: 36, h: 26, width: '12%' }
+const ACT_CHIP: Chip = { w: 108, h: 30, width: '48%' }
+const LOW_CHIP: Chip = { w: 86, h: 26, width: '27%' }
+const TOOL_CHIP: Chip = { w: 36, h: 24, width: '12%' }
+const OPEN_CHIP: Chip = { w: 100, h: 26, width: '31%' }
+// Кнопка размером с подпись, поэтому прозрачная подпись длиннее любой картинки. Лишнее приложение режет многоточием,
+// поэтому кнопка заходит за край картинки: многоточие остаётся за обрезанным краем
+const BLANK = '\u00a0'.repeat(130)
 
 const METAL = 'url(#metal)'
-const num = (n: number, digits = 1) => n.toFixed(digits).replace('.', ',')
-const thousands = (n: number) => `${Math.round(n / 1000)} тыс.`
+const num = (n: number, digits = 1) => n.toFixed(digits).replace('.', t(',', '.'))
+const thousands = (n: number) => t(`${Math.round(n / 1000)} тыс.`, `${Math.round(n / 1000)}k`)
 const kilo = (n: number) => `${Math.round(n / 1000)}K`
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -230,7 +287,10 @@ const level = (pct: number) => (pct >= 85 ? C.alarm : pct >= 60 ? C.warn : C.goo
 const paint = (pct: number, gradient: string) => (C.flat ? level(pct) : pct >= 85 ? C.alarm : gradient)
 const areaFill = (pct: number) => (C.flat || pct >= 85 ? `fill="${paint(pct, '')}" fill-opacity=".18"` : 'fill="url(#fall)"')
 const ctxPaint = (n: number) => (n >= HEAVY_CTX ? C.alarm : !C.flat ? 'url(#ring)' : n >= 150_000 ? C.warn : C.good)
-const idle = (min: number) => (min < 60 ? `${min} мин` : `${Math.floor(min / 60)} ч ${min % 60} мин`)
+const idle = (min: number) =>
+  min < 60
+    ? t(`${min} мин`, `${min} min`)
+    : t(`${Math.floor(min / 60)} ч ${min % 60} мин`, `${Math.floor(min / 60)} h ${min % 60} min`)
 const stops = `<stop stop-color="#000" stop-opacity="0"/>`
 const defs = (w: number) => {
   const metal = C.flat ? stops : `<stop stop-color="${C.lo}"/><stop offset="1" stop-color="${C.hi}"/>`
@@ -267,7 +327,7 @@ function clock(ms: number, tz: number) {
 
 function dayClock(ms: number, tz: number) {
   const d = new Date(ms + tz * 60_000)
-  const months = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
+  const months = t('янв фев мар апр мая июн июл авг сен окт ноя дек', 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec').split(' ')
   return `${d.getUTCDate()} ${months[d.getUTCMonth()]} ${clock(ms, tz)}`
 }
 
@@ -301,25 +361,27 @@ function gaugesSvg(lim: Limits | null, tz: number) {
   const ctx = lim?.context
   const body =
     (five
-      ? ring(48, five.percentUsed, paint(five.percentUsed, 'url(#ring)'), `${Math.round(five.percentUsed)}%`, '5 часов',
-          five.resetsAt ? `сброс ${clock(Date.parse(five.resetsAt), tz)}` : '')
-      : ring(48, 0, C.muted, '—', '5 часов', 'после ответа')) +
+      ? ring(48, five.percentUsed, paint(five.percentUsed, 'url(#ring)'), `${Math.round(five.percentUsed)}%`, t('5 часов', '5 hours'),
+          five.resetsAt ? t(`сброс ${clock(Date.parse(five.resetsAt), tz)}`, `resets ${clock(Date.parse(five.resetsAt), tz)}`) : '')
+      : ring(48, 0, C.muted, '—', t('5 часов', '5 hours'), t('после ответа', 'after a reply'))) +
     (week
-      ? ring(148, week.percentUsed, paint(week.percentUsed, 'url(#ring)'), `${Math.round(week.percentUsed)}%`, 'Неделя',
-          week.resetsAt ? `сброс ${dayClock(Date.parse(week.resetsAt), tz)}` : '')
-      : ring(148, 0, C.muted, '—', 'Неделя', '')) +
+      ? ring(148, week.percentUsed, paint(week.percentUsed, 'url(#ring)'), `${Math.round(week.percentUsed)}%`, t('Неделя', 'Week'),
+          week.resetsAt ? t(`сброс ${dayClock(Date.parse(week.resetsAt), tz)}`, `resets ${dayClock(Date.parse(week.resetsAt), tz)}`) : '')
+      : ring(148, 0, C.muted, '—', t('Неделя', 'Week'), '')) +
     (ctx?.tokens !== undefined
-      ? ring(248, ctx.percent ?? 0, ctxPaint(ctx.tokens), `${ctx.percent ?? 0}%`, 'Контекст', thousands(ctx.tokens))
-      : ring(248, 0, C.muted, '—', 'Контекст', ''))
-  const alt = `Лимит 5 часов ${five ? Math.round(five.percentUsed) : '?'}%, неделя ${week ? Math.round(week.percentUsed) : '?'}%, контекст ${ctx?.percent ?? '?'}%`
+      ? ring(248, ctx.percent ?? 0, ctxPaint(ctx.tokens), `${ctx.percent ?? 0}%`, t('Контекст', 'Context'), thousands(ctx.tokens))
+      : ring(248, 0, C.muted, '—', t('Контекст', 'Context'), ''))
+  const fivePct = five ? Math.round(five.percentUsed) : '?'
+  const weekPct = week ? Math.round(week.percentUsed) : '?'
+  const alt = t(`Лимит 5 часов ${fivePct}%, неделя ${weekPct}%, контекст ${ctx?.percent ?? '?'}%`, `5-hour limit ${fivePct}%, week ${weekPct}%, context ${ctx?.percent ?? '?'}%`)
   return { source: svg(114, body, 'glow'), alt }
 }
 
 function forecastSvg(s: Snapshot | null, lim: Limits | null, now: number, tz: number) {
   const five = lim?.rateLimits.find(r => r.kind === 'five_hour')
-  const head = `<text x="0" y="12" class="h">${cap('5-часовое окно')}</text>`
+  const head = `<text x="0" y="12" class="h">${cap(t('5-часовое окно', '5-hour window'))}</text>`
   if (!s || !five || !s.winStart) {
-    return { source: svg(34, `${head}<text x="0" y="31" class="m">нет данных об окне, появятся после ответа модели</text>`), alt: 'Нет данных об окне' }
+    return { source: svg(34, `${head}<text x="0" y="31" class="m">${t('нет данных об окне, появятся после ответа модели', 'no window data yet, it appears after a model reply')}</text>`), alt: t('Нет данных об окне', 'No window data') }
   }
   const x0 = 26
   const x1 = W - 4
@@ -344,7 +406,7 @@ function forecastSvg(s: Snapshot | null, lim: Limits | null, now: number, tz: nu
 
   const perMin = s.rate30Pct / 30
   let proj = ''
-  let note = 'сейчас почти не тратится'
+  let note = t('сейчас почти не тратится', 'almost no spend right now')
   if (perMin >= 0.01) {
     const hitMin = nowMin + (100 - pct) / perMin
     const endMin = Math.min(300, hitMin)
@@ -356,15 +418,15 @@ function forecastSvg(s: Snapshot | null, lim: Limits | null, now: number, tz: nu
       `<path d="M${x(nowMin).toFixed(1)},${y(pct).toFixed(1)} L${ex.toFixed(1)},${y(endPct).toFixed(1)}" stroke="${color}" stroke-width="1.6" stroke-dasharray="5 4" fill="none"/>` +
       (hits ? `<circle cx="${ex.toFixed(1)}" cy="${y(100)}" r="4" fill="${C.alarm}"/>` : '')
     note = hits
-      ? `кончится ≈ ${clock(s.winStart + hitMin * 60_000, tz)}`
-      : `к сбросу ≈ ${Math.round(endPct)}%`
+      ? t(`кончится ≈ ${clock(s.winStart + hitMin * 60_000, tz)}`, `runs out ≈ ${clock(s.winStart + hitMin * 60_000, tz)}`)
+      : t(`к сбросу ≈ ${Math.round(endPct)}%`, `at reset ≈ ${Math.round(endPct)}%`)
     const lx = clamp(ex, x0 + 90, x1)
     proj += `<text x="${lx.toFixed(1)}" y="${hits ? yTop - 7 : y(endPct) - 7}" text-anchor="end" class="t" style="fill:${color}">${note}</text>`
   }
   const resets = five.resetsAt ? Date.parse(five.resetsAt) : s.winStart + 300 * 60_000
   const body =
     head +
-    `<text x="${W}" y="12" text-anchor="end" class="m">темп ${num(s.rate30Pct)}% за 30 мин</text>` +
+    `<text x="${W}" y="12" text-anchor="end" class="m">${t(`темп ${num(s.rate30Pct)}% за 30 мин`, `pace ${num(s.rate30Pct)}% per 30 min`)}</text>` +
     `<line x1="${x0}" y1="${y(100)}" x2="${x1}" y2="${y(100)}" stroke="${C.alarm}" stroke-opacity=".45" stroke-dasharray="3 3"/>` +
     `<line x1="${x0}" y1="${y(50)}" x2="${x1}" y2="${y(50)}" class="grid" stroke-dasharray="2 4"/>` +
     `<line x1="${x0}" y1="${yBot}" x2="${x1}" y2="${yBot}" class="grid"/>` +
@@ -377,47 +439,50 @@ function forecastSvg(s: Snapshot | null, lim: Limits | null, now: number, tz: nu
     `<circle cx="${x(nowMin).toFixed(1)}" cy="${y(pct).toFixed(1)}" r="3.6" fill="${paint(pct, C.hi)}"/>` +
     proj +
     `<text x="${x0}" y="${yBot + 16}" class="m">${clock(s.winStart, tz)}</text>` +
-    `<text x="${x(nowMin).toFixed(1)}" y="${yBot + 16}" text-anchor="middle" class="m">сейчас</text>` +
+    `<text x="${x(nowMin).toFixed(1)}" y="${yBot + 16}" text-anchor="middle" class="m">${t('сейчас', 'now')}</text>` +
     `<text x="${x1}" y="${yBot + 16}" text-anchor="end" class="m">${clock(resets, tz)}</text>`
-  return { source: svg(114, body), alt: `Пятичасовое окно: ${Math.round(pct)}%, ${note}` }
+  return { source: svg(114, body), alt: t(`Пятичасовое окно: ${Math.round(pct)}%, ${note}`, `5-hour window: ${Math.round(pct)}%, ${note}`) }
 }
 
 function sessionsHeadSvg(s: Snapshot) {
   const rows = s.sessions
-  const count = (st: Row['status'][]) => rows.filter(r => st.includes(r.status)).length
-  const stopColor = count(['limit']) ? C.status.limit : C.status.stopped
-  const alt = `Сессии: работают ${count(['running'])}, ждут ${count(['waiting'])}, стоп ${count(['stopped', 'limit'])}, агентов ${s.agents}`
+  const count = (state: RowState) => rows.filter(r => stateOf(r) === state).length
+  const [need, run, wait, stop] = [count('attention'), count('running'), count('waiting'), count('stopped')]
+  const alt = t(`Сессии: внимание ${need}, работают ${run}, ждут ${wait}, стоп ${stop}, агентов ${s.agents}`, `Sessions: ${need} need you, ${run} running, ${wait} waiting, ${stop} stopped, ${s.agents} agents`)
   if (C.flat) {
     const slot = (x: number, color: string, text: string) =>
       `<circle cx="${x + 5}" cy="11" r="5" fill="${color}"/><text x="${x + 14}" y="15" class="t">${text}</text>`
     const body =
-      slot(0, C.status.running, `${count(['running'])} работают`) +
-      slot(84, C.status.waiting, `${count(['waiting'])} ждут`) +
-      slot(148, stopColor, `${count(['stopped', 'limit'])} стоп`) +
+      slot(0, C.status.attention, String(need)) +
+      slot(40, C.status.running, String(run)) +
+      slot(80, C.status.waiting, String(wait)) +
+      slot(120, C.status.stopped, String(stop)) +
       `<rect x="212" y="4" width="84" height="15" rx="7.5" fill="${C.ctx}" fill-opacity=".15"/>` +
-      `<text x="254" y="15" text-anchor="middle" class="t" style="fill:${C.ctx}">агентов ${s.agents}</text>` +
-      (rows.length ? '' : `<text x="0" y="40" class="m">сегодня сессий не было</text>`)
+      `<text x="254" y="15" text-anchor="middle" class="t" style="fill:${C.ctx}">${t(`агентов ${s.agents}`, `agents ${s.agents}`)}</text>` +
+      (rows.length ? '' : `<text x="0" y="40" class="m">${t('сегодня сессий не было', 'no sessions today')}</text>`)
     return { source: svg(rows.length ? 24 : 46, body), alt }
   }
   const stat = (x: number, value: number, label: string, color: string) =>
     `<text x="${x}" y="20" text-anchor="middle" class="b" style="fill:${color}">${value}</text>` +
-    `<text x="${x}" y="35" text-anchor="middle" class="h" style="font-size:9.5px">${label}</text>`
+    `<text x="${x}" y="35" text-anchor="middle" class="h" style="font-size:9px;letter-spacing:.06em">${label}</text>`
   let body =
-    stat(37, count(['running']), 'РАБОТАЮТ', C.status.running) +
-    stat(111, count(['waiting']), 'ЖДУТ', C.status.waiting) +
-    stat(185, count(['stopped', 'limit']), 'СТОП', stopColor) +
-    stat(259, s.agents, 'АГЕНТОВ', C.ink)
-  if (!rows.length) body += `<text x="0" y="56" class="m">сегодня сессий не было</text>`
+    stat(28, need, t('ВНИМАНИЕ', 'ATTENTION'), C.status.attention) +
+    stat(92, run, t('РАБОТАЮТ', 'RUNNING'), C.status.running) +
+    stat(150, wait, t('ЖДУТ', 'WAITING'), C.status.waiting) +
+    stat(204, stop, t('СТОП', 'STOPPED'), C.status.stopped) +
+    stat(264, s.agents, t('АГЕНТОВ', 'AGENTS'), C.ink)
+  if (!rows.length) body += `<text x="0" y="56" class="m">${t('сегодня сессий не было', 'no sessions today')}</text>`
   return { source: svg(rows.length ? 38 : 60, body), alt }
 }
 
-// Строка сессии. Если её можно открыть, статус рисует кнопка рядом, поэтому картинка уже и без плашки
+// Строка сессии. Статус показывает цвет строки, справа прямоугольник со знаком Enter; без ссылки статус подписан
 function sessionRowSvg(r: Row) {
-  const rowW = r.link ? ROW_W : C.flat ? W : OUT_W
+  const rowW = C.flat ? W : OUT_W
   const h = 44
-  const color = C.status[r.status]
-  const label = STATUS[r.status].label
-  const barW = r.link ? 52 : 160
+  const color = C.status[stateOf(r)]
+  const label = statusLabel(r.status)
+  const barW = r.link ? 104 : 160
+  const keyX = rowW - 42
   const barH = C.flat ? 8 : 5
   const fill = (clamp(r.ctx, 0, 1_000_000) / 1_000_000) * barW
   const heavyX = 14 + (HEAVY_CTX / 1_000_000) * barW
@@ -428,39 +493,65 @@ function sessionRowSvg(r: Row) {
   // До остывания видно и сколько осталось, и во что обойдётся опоздание
   const cold =
     r.coldInMin !== null
-      ? `❄ ${r.coldInMin} мин · ${num(r.coldPct ?? 0)}%`
+      ? t(`❄ ${r.coldInMin} мин · ${num(r.coldPct ?? 0)}%`, `❄ ${r.coldInMin} min · ${num(r.coldPct ?? 0)}%`)
       : r.coldPct !== null
         ? `❄ ${num(r.coldPct)}%`
         : null
-  const tail = cold ?? (r.agents ? `агентов ${r.agents}` : since)
+  const tail = cold ?? (r.agents ? t(`агентов ${r.agents}`, `agents ${r.agents}`) : since)
   const tailColor = r.urgent ? C.alarm : cold ? C.cold : r.agents ? C.ctx : undefined
+  // Знак Enter нарисован линиями: символ шрифта на разных компьютерах выглядит по-разному
   const chip = r.link
-    ? ''
+    ? `<rect x="${keyX}" y="7" width="34" height="30" rx="6" fill="${color}" fill-opacity=".16" stroke="${color}" stroke-opacity=".7"/>` +
+      `<path d="M${keyX + 23} 16v6a2.5 2.5 0 0 1-2.5 2.5H${keyX + 11}m3.5-3.5l-3.5 3.5 3.5 3.5" fill="none" stroke="${color}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>`
     : `<rect x="${rowW - 98}" y="6" width="90" height="18" rx="9" fill="${C.flat ? color : C.track}"/>` +
       `<text x="${rowW - 53}" y="19" text-anchor="middle" class="t" style="fill:${C.flat ? '#fff' : color};font-size:11.5px">${label}</text>`
   const back = C.flat
     ? `<rect x="0" y="0" width="${rowW}" height="${h}" rx="7" fill="${color}" fill-opacity=".16"/><rect x="0" y="0" width="6" height="${h}" rx="3" fill="${color}"/>`
-    : `<rect x=".5" y=".5" width="${rowW - 1}" height="${h - 1}" rx="10" fill="url(#card)" stroke="${C.line}"/><rect x="0" y="10" width="3" height="${h - 20}" rx="1.5" fill="${color}"/>`
+    : `<rect x=".5" y=".5" width="${rowW - 1}" height="${h - 1}" rx="10" fill="url(#card)"/>` +
+      `<rect x=".5" y=".5" width="${rowW - 1}" height="${h - 1}" rx="10" fill="${color}" fill-opacity=".09" stroke="${color}" stroke-opacity=".6"/>` +
+      `<rect x="0" y="8" width="4" height="${h - 16}" rx="2" fill="${color}"/>`
   const body =
-    `<title>${esc(r.title)} · ${esc(r.project)} · ${label} ${since} · контекст ${thousands(r.ctx)}</title>` +
+    `<title>${esc(r.title)} · ${esc(r.project)} · ${label} ${since} · ${t('контекст', 'context')} ${thousands(r.ctx)}</title>` +
     back +
-    `<text x="14" y="18" class="n">${cut(r.title, !r.link ? 27 : C.flat ? 24 : 26)}</text>` +
+    `<text x="14" y="18" class="n">${cut(r.title, !r.link ? 27 : C.flat ? 33 : 38)}</text>` +
     chip +
     `<rect x="14" y="28" width="${barW}" height="${barH}" rx="${barH / 2}" class="trf"/>` +
     (fill > 0 ? `<rect x="14" y="28" width="${Math.max(4, fill).toFixed(1)}" height="${barH}" rx="${barH / 2}" fill="${isHeavy ? C.alarm : C.flat ? C.ctx : 'url(#fillh)'}"/>` : '') +
     `<line x1="${heavyX.toFixed(1)}" y1="26" x2="${heavyX.toFixed(1)}" y2="${28 + barH + 2}" stroke="${C.alarm}" stroke-opacity=".6"/>` +
     `<text x="${14 + barW + 6}" y="36" class="m" style="fill:${ctxColor}">${kilo(r.ctx)}</text>` +
-    (tail ? `<text x="${rowW - 8}" y="36" text-anchor="end" class="m"${tailColor ? ` style="fill:${tailColor}"` : ''}>${tail}</text>` : '')
-  const coldAlt = r.coldInMin !== null ? `, кэш остынет через ${r.coldInMin} мин, потом ответ обойдётся в ${num(r.coldPct ?? 0)}% лимита` : ''
-  const alt = `${r.title}: ${label}${since ? `, ${since}` : ''}, контекст ${thousands(r.ctx)}${coldAlt}`
+    (tail ? `<text x="${r.link ? keyX - 8 : rowW - 8}" y="36" text-anchor="end" class="m"${tailColor ? ` style="fill:${tailColor}"` : ''}>${tail}</text>` : '')
+  const coldAlt =
+    r.coldInMin !== null
+      ? t(`, кэш остынет через ${r.coldInMin} мин, потом ответ обойдётся в ${num(r.coldPct ?? 0)}% лимита`, `, cache cools in ${r.coldInMin} min, then a reply costs ${num(r.coldPct ?? 0)}% of the limit`)
+      : ''
+  const alt = `${r.title}: ${label}${since ? `, ${since}` : ''}, ${t('контекст', 'context')} ${thousands(r.ctx)}${coldAlt}`
   return { source: doc(rowW, h, body), alt }
 }
 
+// Кнопка-картинка: шрифт как у названия страны, рамка в один пиксель, выбранная заметнее
+function chipSvg(c: Chip, text: string, isMain: boolean, mark?: string) {
+  const accent = C.flat ? C.ctx : C.mid
+  const fill = isMain ? `fill="${accent}" fill-opacity=".16"` : C.flat ? 'fill="none"' : 'fill="url(#card)"'
+  const edge = C.flat && !isMain ? 'class="grid"' : `stroke="${accent}"`
+  const body =
+    `<rect x=".5" y=".5" width="${c.w - 1}" height="${c.h - 1}" rx="7" ${fill} ${edge} stroke-width="1" vector-effect="non-scaling-stroke"/>` +
+    (mark ?? `<text x="${c.w / 2}" y="${c.h / 2 + 4}" text-anchor="middle" class="t" style="font-size:11.5px${isMain ? ';font-weight:600' : ''}">${esc(text)}</text>`)
+  return { source: doc(c.w, c.h, body), alt: text }
+}
+
+// Значок кнопки настройки: четыре блока
+const BLOCKS_MARK = [[12, 7], [19, 7], [12, 14], [19, 14]].map(([x, y]) => `<rect x="${x}" y="${y}" width="5" height="5" rx="1.2" class="t"/>`).join('')
+
+// Название блока в режиме настройки
+function blockLabelSvg(text: string) {
+  return { source: doc(120, 24, `<text x="2" y="16" class="h">${esc(cap(text))}</text>`), alt: text }
+}
+
 function weekSvg(s: Snapshot, lim: Limits | null, now: number, tz: number) {
-  const head = `<text x="0" y="12" class="h">${cap('Недельное окно')}</text>`
+  const head = `<text x="0" y="12" class="h">${cap(t('Недельное окно', 'Weekly window'))}</text>`
   const wk = s.week
   if (!wk) {
-    return { source: svg(34, `${head}<text x="0" y="31" class="m">нет данных о недельном лимите</text>`), alt: 'Нет данных о недельном лимите' }
+    return { source: svg(34, `${head}<text x="0" y="31" class="m">${t('нет данных о недельном лимите', 'no weekly limit data')}</text>`), alt: t('Нет данных о недельном лимите', 'No weekly limit data') }
   }
   const x0 = 26
   const x1 = W - 4
@@ -477,19 +568,22 @@ function weekSvg(s: Snapshot, lim: Limits | null, now: number, tz: number) {
   const area = `${line} L${x(now).toFixed(1)},${yBot} Z`
 
   let proj = ''
-  let note = 'темп станет ясен через несколько часов'
+  let note = t('темп станет ясен через несколько часов', 'the pace will be clear in a few hours')
   if (wk.perDay !== null && wk.endPct !== null) {
     const hits = wk.hitAt !== null
     const color = hits ? C.alarm : C.muted
     const ex = x(wk.hitAt ?? wk.reset)
     const ey = y(hits ? 100 : wk.endPct)
-    note = wk.hitAt !== null ? `кончится ≈ ${dayClock(wk.hitAt, tz)}` : `к сбросу ≈ ${Math.min(100, wk.endPct)}%`
+    note =
+      wk.hitAt !== null
+        ? t(`кончится ≈ ${dayClock(wk.hitAt, tz)}`, `runs out ≈ ${dayClock(wk.hitAt, tz)}`)
+        : t(`к сбросу ≈ ${Math.min(100, wk.endPct)}%`, `at reset ≈ ${Math.min(100, wk.endPct)}%`)
     proj =
       `<path d="M${x(now).toFixed(1)},${y(pct).toFixed(1)} L${ex.toFixed(1)},${ey.toFixed(1)}" stroke="${color}" stroke-width="1.6" stroke-dasharray="5 4" fill="none"/>` +
       (hits ? `<circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="4" fill="${C.alarm}"/>` : '') +
       `<text x="${clamp(ex, x0 + 120, x1).toFixed(1)}" y="${hits ? yTop - 7 : ey - 7}" text-anchor="end" class="t" style="fill:${color}">${note}</text>`
   }
-  const names = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб']
+  const names = t('вс пн вт ср чт пт сб', 'Su Mo Tu We Th Fr Sa').split(' ')
   let days = ''
   for (let i = 0; i < 7; i++) {
     const at = wk.start + i * day
@@ -498,7 +592,7 @@ function weekSvg(s: Snapshot, lim: Limits | null, now: number, tz: number) {
   }
   const body =
     head +
-    (wk.perDay !== null ? `<text x="${W}" y="12" text-anchor="end" class="m">темп ${num(wk.perDay)}% в сутки</text>` : '') +
+    (wk.perDay !== null ? `<text x="${W}" y="12" text-anchor="end" class="m">${t(`темп ${num(wk.perDay)}% в сутки`, `pace ${num(wk.perDay)}% per day`)}</text>` : '') +
     `<line x1="${x0}" y1="${y(100)}" x2="${x1}" y2="${y(100)}" stroke="${C.alarm}" stroke-opacity=".45" stroke-dasharray="3 3"/>` +
     `<line x1="${x0}" y1="${y(50)}" x2="${x1}" y2="${y(50)}" class="grid" stroke-dasharray="2 4"/>` +
     `<line x1="${x0}" y1="${yBot}" x2="${x1}" y2="${yBot}" class="grid"/>` +
@@ -510,7 +604,7 @@ function weekSvg(s: Snapshot, lim: Limits | null, now: number, tz: number) {
     `<path d="${line}" stroke="${paint(pct, METAL)}" stroke-width="2.2" fill="none" stroke-linejoin="round"/>` +
     `<circle cx="${x(now).toFixed(1)}" cy="${y(pct).toFixed(1)}" r="3.6" fill="${paint(pct, C.hi)}"/>` +
     proj
-  return { source: svg(114, body), alt: `Недельное окно: ${Math.round(pct)}%, ${note}` }
+  return { source: svg(114, body), alt: t(`Недельное окно: ${Math.round(pct)}%, ${note}`, `Weekly window: ${Math.round(pct)}%, ${note}`) }
 }
 
 function hoursSvg(s: Snapshot, now: number, tz: number) {
@@ -527,7 +621,7 @@ function hoursSvg(s: Snapshot, now: number, tz: number) {
     const color = v >= 20 ? C.alarm : !C.flat ? 'url(#bar)' : v >= 10 ? C.warn : C.good
     bars +=
       v > 0
-        ? `<rect x="${bx.toFixed(1)}" y="${y(v).toFixed(1)}" width="${(step - 4).toFixed(1)}" height="${(yBot - y(v)).toFixed(1)}" rx="2" fill="${color}"><title>${String(h).padStart(2, '0')}:00 — ${num(v)}% лимита</title></rect>`
+        ? `<rect x="${bx.toFixed(1)}" y="${y(v).toFixed(1)}" width="${(step - 4).toFixed(1)}" height="${(yBot - y(v)).toFixed(1)}" rx="2" fill="${color}"><title>${String(h).padStart(2, '0')}:00, ${num(v)}% ${t('лимита', 'of the limit')}</title></rect>`
         : `<rect x="${bx.toFixed(1)}" y="${yBot - 2}" width="${(step - 4).toFixed(1)}" height="2" class="trf"/>`
     if (h === hourNow) bars += `<circle cx="${(bx + (step - 4) / 2).toFixed(1)}" cy="${yBot + 6}" r="2.2" fill="${C.hi}"/>`
   })
@@ -535,13 +629,13 @@ function hoursSvg(s: Snapshot, now: number, tz: number) {
     .map(h => `<text x="${(x0 + h * step + step / 2).toFixed(1)}" y="${yBot + 20}" text-anchor="middle" class="m">${h}</text>`)
     .join('')
   const body =
-    `<text x="0" y="12" class="h">${cap('Сегодня по часам')}</text>` +
-    `<text x="${W}" y="12" text-anchor="end" class="m">${num(s.todayPct, 0)}% лимита за день</text>` +
+    `<text x="0" y="12" class="h">${cap(t('Сегодня по часам', 'Today by hour'))}</text>` +
+    `<text x="${W}" y="12" text-anchor="end" class="m">${t(`${num(s.todayPct, 0)}% лимита за день`, `${num(s.todayPct, 0)}% of the limit today`)}</text>` +
     `<line x1="${x0}" y1="${y(20).toFixed(1)}" x2="${W - 2}" y2="${y(20).toFixed(1)}" stroke="${C.alarm}" stroke-dasharray="4 3" stroke-opacity=".6"/>` +
-    `<text x="${W - 2}" y="${(y(20) - 3).toFixed(1)}" text-anchor="end" class="m">норма 20%/ч</text>` +
+    `<text x="${W - 2}" y="${(y(20) - 3).toFixed(1)}" text-anchor="end" class="m">${t('норма 20%/ч', 'norm 20%/h')}</text>` +
     bars +
     labels
-  return { source: svg(100, body), alt: `Сегодня ${num(s.todayPct, 0)}% пятичасового лимита, по часам` }
+  return { source: svg(100, body), alt: t(`Сегодня ${num(s.todayPct, 0)}% пятичасового лимита, по часам`, `Today ${num(s.todayPct, 0)}% of the 5-hour limit, by hour`) }
 }
 
 function spendSvg(s: Snapshot) {
@@ -576,40 +670,50 @@ function spendSvg(s: Snapshot) {
       `<text x="${W}" y="${y0 + 10}" text-anchor="end" class="t" style="fill:${C.flat ? C.ctx : C.hi}">${num(t.pct, 0)}%</text>`
   })
   const body =
-    `<text x="0" y="12" class="h">${cap('Модели и лидеры расхода')}</text>` +
+    `<text x="0" y="12" class="h">${cap(t('Модели и лидеры расхода', 'Models and top spenders'))}</text>` +
     `<clipPath id="r"><rect x="0" y="22" width="${W}" height="8" rx="4"/></clipPath><g clip-path="url(#r)"><rect x="0" y="22" width="${W}" height="8" class="trf"/>${stack}</g>` +
     legend +
     leaders
-  return { source: svg(58 + s.top.length * 20, body), alt: `Модели: ${models.map(([m, u]) => `${m} ${Math.round((u / total) * 100)}%`).join(', ')}` }
+  return { source: svg(58 + s.top.length * 20, body), alt: `${t('Модели', 'Models')}: ${models.map(([m, u]) => `${m} ${Math.round((u / total) * 100)}%`).join(', ')}` }
 }
 
 // Квадрат рядом с кнопками: вверху страна выхода в интернет, внизу скорость на круговой шкале.
 // Шкала логарифмическая: разница между 5 и 50 Мбит/с важнее, чем между 300 и 350
 const NET_W = 92
-const NET_H = 92
+const NET_H = 74
+
+// Название страны на английском берём у движка; русское уже пришло от замера
+function countryName(n: Net) {
+  if (LANG !== 'en' || !n.code) return n.country
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'region' }).of(n.code) ?? n.code
+  } catch {
+    return n.code
+  }
+}
 
 function netSvg(n: Net | null) {
   const cx = NET_W / 2
-  const cy = 72
-  const r = 25
+  const cy = 60
+  const r = 21
   const len = Math.PI * r
   const mbit = n?.mbit ?? null
-  const name = n ? (n.country ?? 'нет сети') : 'замеряю'
+  const name = n ? (countryName(n) ?? t('нет сети', 'offline')) : t('замеряю', 'measuring')
   const pos = mbit === null ? 0 : clamp(Math.log10(Math.max(mbit, 1)) / 3, 0, 1)
   const arc = `M${cx - r},${cy} A${r},${r} 0 0 1 ${cx + r},${cy}`
   const stroke = mbit !== null && mbit < 5 ? C.alarm : !C.flat ? 'url(#ring)' : mbit !== null && mbit < 25 ? C.warn : C.good
   const size = name.length > 11 ? 10 : name.length > 8 ? 11 : 12.5
   const body =
     `<rect x=".5" y=".5" width="${NET_W - 1}" height="${NET_H - 1}" rx="12" fill="${C.flat ? 'none' : 'url(#card)'}" stroke="${C.line}"/>` +
-    `<text x="${cx}" y="23" text-anchor="middle" class="t" style="font-size:${size}px">${esc(name)}</text>` +
-    `<line x1="12" y1="34" x2="${NET_W - 12}" y2="34" class="grid"/>` +
+    `<text x="${cx}" y="18" text-anchor="middle" class="t" style="font-size:${size}px">${esc(name)}</text>` +
+    `<line x1="12" y1="26" x2="${NET_W - 12}" y2="26" class="grid"/>` +
     `<path d="${arc}" fill="none" class="tr" stroke-width="6" stroke-linecap="round"/>` +
     (pos > 0
       ? `<path d="${arc}" fill="none" stroke="${stroke}" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(pos * len).toFixed(1)} ${len.toFixed(1)}"/>`
       : '') +
-    `<text x="${cx}" y="${cy - 2}" text-anchor="middle" class="b" style="font-size:15px">${mbit === null ? '—' : Math.round(mbit)}</text>` +
-    `<text x="${cx}" y="${cy + 12}" text-anchor="middle" class="m" style="font-size:9px">Мбит/с</text>`
-  const alt = `${name}, ${mbit === null ? 'скорость не измерена' : `${Math.round(mbit)} Мбит/с`}`
+    `<text x="${cx}" y="${cy - 1}" text-anchor="middle" class="b" style="font-size:14px">${mbit === null ? '—' : Math.round(mbit)}</text>` +
+    `<text x="${cx}" y="${cy + 10}" text-anchor="middle" class="m" style="font-size:9px">${t('Мбит/с', 'Mbit/s')}</text>`
+  const alt = `${name}, ${mbit === null ? t('скорость не измерена', 'speed not measured') : `${Math.round(mbit)} ${t('Мбит/с', 'Mbit/s')}`}`
   return { source: doc(NET_W, NET_H, body), alt }
 }
 
@@ -635,7 +739,7 @@ async function collect($: EngineInterface) {
     const script = `${$.plugin.root}/collector/collect.py`
     const sid = await $.session.id()
     // Заглушка python3 из Microsoft Store запускается, но падает, поэтому при любой ошибке пробуем следующий
-    let failure = NO_PYTHON
+    let failure = noPython()
     for (const exe of PYTHONS) {
       try {
         const args = [start, five ? String(five.percentUsed) : '', sid, week ? String(week.percentUsed) : '', week?.resetsAt ?? '']
@@ -646,7 +750,7 @@ async function collect($: EngineInterface) {
           await update($, error, () => null)
           return
         }
-        if (r.stderr.includes('Traceback')) failure = `сборщик: ${r.stderr.slice(-200)}`
+        if (r.stderr.includes('Traceback')) failure = `${t('сборщик', 'collector')}: ${r.stderr.slice(-200)}`
       } catch {
         continue
       }
@@ -686,9 +790,21 @@ async function checkNet($: EngineInterface, force: boolean) {
   }
 }
 
+// Стиль, язык и блоки общие для всех сессий: открытые панели подхватывают их при обновлении
+async function loadPrefs($: EngineInterface) {
+  const savedStyle = (await $.store.get('style').catch(() => undefined)) as StyleId | undefined
+  if (savedStyle) await update($, style, () => savedStyle)
+  const savedLang = (await $.store.get('lang').catch(() => undefined)) as LangId | undefined
+  if (savedLang) {
+    LANG = savedLang
+    await update($, lang, () => savedLang)
+  }
+  const savedLayout = (await $.store.get('layout').catch(() => undefined)) as Layout | undefined
+  if (savedLayout) await update($, layout, () => cleanLayout(savedLayout))
+}
+
 async function refresh($: EngineInterface, force = false) {
-  const saved = (await $.store.get('style').catch(() => undefined)) as StyleId | undefined
-  if (saved) await update($, style, () => saved)
+  await loadPrefs($)
   await readUsage($)
   await collect($)
   // Уведомление вторично: его сбой не должен ломать обновление пульта
@@ -727,11 +843,11 @@ async function notify($: EngineInterface, text: string) {
   $.ui.toast(text)
   let isSent = false
   try {
-    isSent = (await $.ui.notify(text, { title: TITLE })).isSent
+    isSent = (await $.ui.notify(text, { title: title() })).isSent
   } catch {
     isSent = false
   }
-  if (!isSent) await windowsToast($, TITLE, text)
+  if (!isSent) await windowsToast($, title(), text)
 }
 
 // Сессия закончила ход. Пока окно Claude в фоне, баннер показывает само приложение, поэтому такие строки
@@ -748,7 +864,7 @@ async function alertWaiting($: EngineInterface) {
   await $.store.set('waits', [...sent, ...fresh.map(key)].slice(-60))
   if (!s.appInFront) return
   for (const r of fresh) {
-    if (r.link) await windowsToast($, `Ждёт вас: ${r.title}`, r.note ?? 'Нажмите, чтобы открыть сессию', r.link)
+    if (r.link) await windowsToast($, t(`Ждёт вас: ${r.title}`, `Waiting for you: ${r.title}`), r.note ?? t('Нажмите, чтобы открыть сессию', 'Click to open the session'), r.link)
   }
 }
 
@@ -764,21 +880,21 @@ async function alertLimits($: EngineInterface) {
   for (const r of lim.rateLimits) {
     if (!r.resetsAt || (r.kind !== 'five_hour' && r.kind !== 'seven_day')) continue
     const isFive = r.kind === 'five_hour'
-    const name = isFive ? 'Лимит 5 часов' : 'Недельный лимит'
+    const name = isFive ? t('Лимит 5 часов', '5-hour limit') : t('Недельный лимит', 'Weekly limit')
     const resetMs = Date.parse(r.resetsAt)
     const reset = isFive ? clock(resetMs, tz) : dayClock(resetMs, tz)
     if (r.percentUsed >= ALERT_PCT) {
-      alerts.push([`${r.kind}-${ALERT_PCT}-${r.resetsAt}`, `${name}: ${Math.round(r.percentUsed)}%, сброс ${reset}`])
+      alerts.push([`${r.kind}-${ALERT_PCT}-${r.resetsAt}`, t(`${name}: ${Math.round(r.percentUsed)}%, сброс ${reset}`, `${name}: ${Math.round(r.percentUsed)}%, resets ${reset}`)])
     }
     const perMin = (s?.rate30Pct ?? 0) / 30
     if (isFive && perMin > 0 && r.percentUsed >= FORECAST_FROM_PCT && r.percentUsed < 100) {
       const endsAt = now + ((100 - r.percentUsed) / perMin) * 60_000
       if (endsAt < resetMs) {
-        alerts.push([`five_hour-end-${r.resetsAt}`, `${name} кончится около ${clock(endsAt, tz)}, а сброс только в ${reset}`])
+        alerts.push([`five_hour-end-${r.resetsAt}`, t(`${name} кончится около ${clock(endsAt, tz)}, а сброс только в ${reset}`, `${name} runs out around ${clock(endsAt, tz)}, the reset is only at ${reset}`)])
       }
     }
     if (!isFive && s?.week?.hitAt && r.percentUsed >= FORECAST_FROM_PCT) {
-      alerts.push([`seven_day-end-${r.resetsAt}`, `${name} кончится около ${dayClock(s.week.hitAt, tz)}, а сброс только ${reset}`])
+      alerts.push([`seven_day-end-${r.resetsAt}`, t(`${name} кончится около ${dayClock(s.week.hitAt, tz)}, а сброс только ${reset}`, `${name} runs out around ${dayClock(s.week.hitAt, tz)}, the reset is only on ${reset}`)])
     }
   }
   if (!alerts.length) return
@@ -789,10 +905,41 @@ async function alertLimits($: EngineInterface) {
   for (const [, text] of fresh) await notify($, text)
 }
 
-// Выбор оформления сохраняем для всех сессий: другие панели подхватят его при следующем обновлении
 async function chooseStyle($: EngineInterface, id: StyleId) {
   await update($, style, () => id)
   await $.store.set('style', id).catch(() => undefined)
+}
+
+async function chooseLang($: EngineInterface, id: LangId) {
+  LANG = id
+  await update($, lang, () => id)
+  await $.store.set('lang', id).catch(() => undefined)
+  void $.ui.open({ id: PANE, title: title() })
+}
+
+// Сохранённое могло остаться от другой версии: неизвестное отбрасываем, новые блоки ставим в конец
+function cleanLayout(l: Layout): Layout {
+  const known = FIRST_LAYOUT.order
+  const kept = (ids: BlockId[]) => ids.filter(id => known.includes(id))
+  const order = kept(l.order)
+
+  return { order: [...order, ...known.filter(id => !order.includes(id))], folded: kept(l.folded), closed: kept(l.closed) }
+}
+
+const toggled = (ids: BlockId[], id: BlockId) => (ids.includes(id) ? ids.filter(b => b !== id) : [...ids, id])
+
+// Меняется местами с соседом на экране: закрытые блоки не считаются, иначе нажатие ничего бы не сдвинуло
+function moved({ order, closed }: Layout, id: BlockId, by: -1 | 1) {
+  const shown = order.filter(b => !closed.includes(b))
+  const other = shown[shown.indexOf(id) + by]
+
+  return other ? order.map(b => (b === id ? other : b === other ? id : b)) : order
+}
+
+async function changeLayout($: EngineInterface, change: (l: Layout) => Layout) {
+  const next = change(await read($, layout))
+  await update($, layout, () => next)
+  await $.store.set('layout', next).catch(() => undefined)
 }
 
 // Открывает сессию в приложении: rundll32 отдаёт ссылку claude:// обработчику без оболочки и кавычек
@@ -800,31 +947,14 @@ async function openSession($: EngineInterface, link: string) {
   try {
     await $.process.run([RUNDLL32, 'url.dll,FileProtocolHandler', link], { timeoutMs: 10_000 })
   } catch (err) {
-    $.ui.toast(`Не удалось открыть сессию: ${String(err).slice(0, 100)}`)
-  }
-}
-
-// Ответ из панели. Адрес local_… понимает приложение: сессию, которая не запущена, оно запускает само
-async function sendReply($: EngineInterface, r: Row, text: string) {
-  const body = text.trim()
-  if (!body || !r.link) return
-  try {
-    const sent = await $.session.send({ to: r.link.slice(r.link.lastIndexOf('/') + 1), text: `${REPLY_MARK} ${body}` })
-    if (sent.isDelivered) {
-      await update($, replyTo, () => null)
-      $.ui.toast(`Ответ ушёл в «${r.title}»`)
-    } else {
-      $.ui.toast(`Не дошло: ${sent.reason}`)
-    }
-  } catch (err) {
-    $.ui.toast(`Не дошло: ${String(err).slice(0, 120)}`)
+    $.ui.toast(`${t('Не удалось открыть сессию', 'Could not open the session')}: ${String(err).slice(0, 100)}`)
   }
 }
 
 // Кнопки «Статус», «Итог», «Проверка»: промпт уходит как набранный пользователем, во время ответа ждёт очереди
 async function ask($: EngineInterface, text: string) {
   const r = await $.prompt.submit({ text, asUser: true })
-  if (r.drop !== undefined) $.ui.toast(`Не отправилось: ${r.drop}`)
+  if (r.drop !== undefined) $.ui.toast(`${t('Не отправилось', 'Not sent')}: ${r.drop}`)
 }
 
 // Команда /new-sheet: отправляет сохранение памяти, а контекст очищается, когда закончится
@@ -833,25 +963,25 @@ async function newSheet($: EngineInterface) {
   await update($, pendingClear, () => 'queued')
   // Если ход с сохранением так и не начался за 10 минут, снимаем ожидание, чтобы кнопка не зависла
   $.clock.after(10 * 60_000, () => void update($, pendingClear, v => (v === 'queued' ? null : v)))
-  $.ui.toast('Сохраняю память проекта, потом очищу контекст')
-  const r = await $.prompt.submit({ text: ASKS.memory, asUser: true })
+  $.ui.toast(t('Сохраняю память проекта, потом очищу контекст', 'Saving the project memory, then clearing the context'))
+  const r = await $.prompt.submit({ text: asks().memory, asUser: true })
   if (r.drop !== undefined) {
     await update($, pendingClear, () => null)
-    $.ui.toast(`Не отправилось: ${r.drop}`)
+    $.ui.toast(`${t('Не отправилось', 'Not sent')}: ${r.drop}`)
   }
 }
 
 async function clearNow($: EngineInterface) {
   try {
     await $.command.run({ command: 'clear', args: '' })
-    $.ui.toast('Новый лист: контекст очищен, подгружаю память проекта')
+    $.ui.toast(t('Новый лист: контекст очищен, подгружаю память проекта', 'New sheet: context cleared, loading the project memory'))
   } catch (err) {
-    $.ui.toast(`Не удалось очистить, наберите /clear: ${String(err).slice(0, 100)}`)
+    $.ui.toast(`${t('Не удалось очистить, наберите /clear', 'Could not clear, type /clear')}: ${String(err).slice(0, 100)}`)
     return
   }
   await readUsage($)
   // Память подгружает не каждый: у кого нет хука на старт сессии, модель прочитает файл сама
-  await ask($, ASKS.resume)
+  await ask($, asks().resume)
 }
 
 // Модель агента из его файла в ~/.claude/agents: true, если там inherit или модели нет
@@ -881,18 +1011,18 @@ async function compactNow($: EngineInterface) {
   try {
     let r
     try {
-      r = await $.session.compact({ instructions: COMPACT_HINT })
+      r = await $.session.compact({ instructions: compactHint() })
     } catch {
-      $.ui.toast('Модель отвечает: сожму, как только закончит')
-      await $.command.run({ command: 'compact', args: COMPACT_HINT })
-      $.ui.toast('Контекст сжат')
+      $.ui.toast(t('Модель отвечает: сожму, как только закончит', 'The model is replying: will compact when it finishes'))
+      await $.command.run({ command: 'compact', args: compactHint() })
+      $.ui.toast(t('Контекст сжат', 'Context compacted'))
       return
     }
-    if (r.skip !== undefined) $.ui.toast(`Сжатие отменено: ${r.skip}`)
-    else if (r.tokensBefore && r.tokensAfter) $.ui.toast(`Контекст сжат: ${kilo(r.tokensBefore)} → ${kilo(r.tokensAfter)}`)
-    else $.ui.toast('Контекст сжат')
+    if (r.skip !== undefined) $.ui.toast(`${t('Сжатие отменено', 'Compaction cancelled')}: ${r.skip}`)
+    else if (r.tokensBefore && r.tokensAfter) $.ui.toast(`${t('Контекст сжат', 'Context compacted')}: ${kilo(r.tokensBefore)} → ${kilo(r.tokensAfter)}`)
+    else $.ui.toast(t('Контекст сжат', 'Context compacted'))
   } catch (err) {
-    $.ui.toast(`Не удалось сжать: ${String(err).slice(0, 120)}`)
+    $.ui.toast(`${t('Не удалось сжать', 'Could not compact')}: ${String(err).slice(0, 120)}`)
   } finally {
     await update($, compacting, () => false)
     await readUsage($)
@@ -902,9 +1032,12 @@ async function compactNow($: EngineInterface) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
-    await $.command.register({ name: 'pult', description: 'Открыть пульт сессий: лимиты, контекст, расход, агенты' })
-    await $.command.register({ name: 'new-sheet', description: 'Новый лист: сохранить память проекта и очистить контекст' })
-    void $.ui.open({ id: PANE, title: TITLE })
+    // Перезагрузка обрывает сжатие на полпути, а флаг её переживает: без сброса кнопка осталась бы на «Сжимаю…»
+    await update($, compacting, () => false)
+    await loadPrefs($)
+    await $.command.register({ name: 'pult', description: t('Открыть пульт сессий: лимиты, контекст, расход, агенты', 'Open the session pult: limits, context, spend, agents') })
+    await $.command.register({ name: 'new-sheet', description: t('Новый лист: сохранить память проекта и очистить контекст', 'New sheet: save the project memory and clear the context') })
+    void $.ui.open({ id: PANE, title: title() })
     tick?.cancel()
     tick = $.clock.every(REFRESH_MS, () => void refresh($))
     void refresh($)
@@ -913,17 +1046,17 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'pult' }, async $ => {
-    await $.ui.open({ id: PANE, title: TITLE })
+    await $.ui.open({ id: PANE, title: title() })
     await refresh($)
 
-    return { text: 'Пульт сессий открыт и обновлён.' }
+    return { text: t('Пульт сессий открыт и обновлён.', 'Session pult opened and refreshed.') }
   })
 
   on('command.run', { command: 'new-sheet' }, $ => {
     // Не ждём: команда не должна висеть до конца хода с сохранением памяти
     void newSheet($)
 
-    return { text: 'Сохраняю память проекта, потом очищу контекст.' }
+    return { text: t('Сохраняю память проекта, потом очищу контекст.', 'Saving the project memory, then clearing the context.') }
   })
 
   on('session.measure', async ($, e, next) => {
@@ -948,7 +1081,7 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
       await update($, turnRunning, () => true)
-      if ((await read($, pendingClear)) === 'queued' && e.text.includes(MEMORY_MARK)) {
+      if ((await read($, pendingClear)) === 'queued' && MEMORY_MARKS.some(mark => e.text.includes(mark))) {
         await update($, pendingClear, () => e.turnId)
       }
     }
@@ -983,18 +1116,24 @@ export const register: Register = on => {
     const cal = s?.cal ?? 255_000
     const isCold = idleMin >= COLD_MIN
     const text = isCold
-      ? `Перерыв ${idle(idleMin)}, кэш остыл: следующий ответ перечитает ${kilo(ctx)} заново, это около ${num((ctx * 2) / cal)}% лимита. После сжатия шаги станут в разы дешевле.`
-      : `Кэш остынет через ${COLD_MIN - idleMin} мин. Пока он тёплый, сжатие дешёвое; потом ${kilo(ctx)} придётся читать заново, около ${num((ctx * 2) / cal)}% лимита.`
+      ? t(
+          `Перерыв ${idle(idleMin)}, кэш остыл: следующий ответ перечитает ${kilo(ctx)} заново, это около ${num((ctx * 2) / cal)}% лимита. После сжатия шаги станут в разы дешевле.`,
+          `Break of ${idle(idleMin)}, the cache has cooled: the next reply rereads ${kilo(ctx)}, about ${num((ctx * 2) / cal)}% of the limit. After compacting, steps get several times cheaper.`,
+        )
+      : t(
+          `Кэш остынет через ${COLD_MIN - idleMin} мин. Пока он тёплый, сжатие дешёвое; потом ${kilo(ctx)} придётся читать заново, около ${num((ctx * 2) / cal)}% лимита.`,
+          `The cache cools in ${COLD_MIN - idleMin} min. Compacting is cheap while it is warm; later ${kilo(ctx)} must be reread, about ${num((ctx * 2) / cal)}% of the limit.`,
+        )
     const { Box, Text, Button } = $.ui.resolve(e)
 
     return (
       <Box flexDirection="row" gap={1}>
         <Text color={isCold ? 'warning' : undefined}>{text}</Text>
         <Button key="cold-compact" variant="primary" onPress={() => void compactNow($)}>
-          Сжать
+          {t('Сжать', 'Compact')}
         </Button>
         <Button key="cold-hide" onPress={() => void update($, coldHidden, () => last)}>
-          Скрыть
+          {t('Скрыть', 'Hide')}
         </Button>
       </Box>
     )
@@ -1002,9 +1141,11 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
-    const { Box, Text, Button, Input } = els
+    const { Box, Text, Button } = els
     // В терминале нет Svg: там вместо графиков их текстовые подписи
     const Svg = 'Svg' in els ? els.Svg : undefined
+    // Кнопки-картинки только на desktop: наложение проверено там, в остальных приложениях кнопки обычные
+    const isDrawn = Svg !== undefined && e.surface === 'desktop'
     const s = await read($, snap)
     const lim = await read($, limits)
     const err = await read($, error)
@@ -1013,125 +1154,177 @@ export const register: Register = on => {
 
     const ctx = lim?.context.tokens ?? s?.self?.ctx ?? 0
     const busyCompact = await read($, compacting)
-    const replying = await read($, replyTo)
     const netNow = await read($, net)
+    const view = await read($, layout)
+    const isArranging = await read($, arranging)
     // После этой строки чтений нет: всё, что ниже, рисуется синхронно в выбранном оформлении
+    LANG = await read($, lang)
     useLook(await read($, style))
     const backdrop = Svg && C.page ? { backgroundColor: C.page, padding: 'sm' as const } : {}
     const noteColor = C.note ? { color: C.note } : { dimColor: true }
-    // На своём фоне панели подпись обычной кнопки сливается с ним: там все кнопки плотные, второстепенные приглушены
+    // Обычная кнопка там, где кнопки не нарисованы: на своём фоне панели подпись сливается с ним, поэтому они плотные
     const pick = (isMain: boolean) =>
       C.solid
         ? { variant: 'primary' as const, dimColor: !isMain }
         : { variant: isMain ? ('primary' as const) : ('secondary' as const) }
-    // Подпись меньше обычной, иначе кнопки занимают всю ширину панели. На угольном фоне кнопка сливается с ним,
-    // поэтому у неё золотая окантовка
-    const btn = (key: string, text: string, isMain: boolean, onPress: () => void) => {
-      const button = (
-        <Button key={key} {...pick(isMain)} onPress={onPress}>
-          <Text size="footnote">{text}</Text>
-        </Button>
-      )
-
-      return Svg && C.solid ? (
-        <Box key={`frame-${key}`} borderStyle="round" borderColor={C.mid}>
-          {button}
-        </Box>
-      ) : (
-        button
-      )
-    }
     // Картинкой, не isInteractive: интерактивная рамка ужимает высокий график до своей высоты
     const draw = (c: { source: string; alt: string }) => (Svg ? <Svg source={c.source} alt={c.alt} /> : <Text>{c.alt}</Text>)
-    // Кнопка заменяет нарисованную плашку статуса: на картинке нельзя нажать часть
+    // Шрифт и рамку обычной кнопки приложение менять не даёт, поэтому на desktop кнопку рисует картинка,
+    // а нажатие ловит прозрачная кнопка поверх. Подпись только в картинке: заданную подпись приложение рисует поверх
+    const hit = (key: string, onPress: () => void, rows = 1) => (
+      <Box position="absolute" left={0} top={0} width="200%" height="100%" flexDirection="column">
+        {Array.from({ length: rows }, (_, i) => (
+          <Button key={i ? `${key}-${i}` : key} plain onPress={onPress}>
+            {BLANK}
+          </Button>
+        ))}
+      </Box>
+    )
+    const btn = (key: string, text: string, isMain: boolean, chip: Chip, onPress: () => void, mark?: string) =>
+      isDrawn ? (
+        <Box key={`frame-${key}`} position="relative" width={chip.width} flexDirection="column" overflow="hidden">
+          {draw(chipSvg(chip, text, isMain, mark))}
+          {hit(key, onPress)}
+        </Box>
+      ) : (
+        <Button key={key} {...pick(isMain)} onPress={onPress}>
+          {text}
+        </Button>
+      )
     const sessionRow = (r: Row) => {
       const link = r.link
-      const canReply = link !== null && r.status === 'waiting' && r.id !== s?.self?.id
-      const isReplying = canReply && replying === r.id
+      const open = link ? () => void openSession($, link) : undefined
 
       return (
         <Box key={r.id} flexDirection="column" gap="xs">
-          {/* Строка сжимается вместе с панелью, чтобы кнопка статуса не уходила за край */}
-          <Box flexDirection="row" alignItems="center" justifyContent="space-between" gap="xs">
-            <Box width={link ? '70%' : '100%'} flexShrink={1}>
-              {draw(sessionRowSvg(r))}
-            </Box>
-            {link &&
-              btn(`open-${r.id}`, STATUS[r.status].short, r.needs || r.urgent || r.status === 'limit', () => void openSession($, link))}
+          <Box position="relative" flexDirection="column" overflow="hidden">
+            {draw(sessionRowSvg(r))}
+            {/* Нажимается вся строка: она выше кнопки, поэтому кнопок две, одна под другой */}
+            {open && isDrawn && hit(`open-${r.id}`, open, 2)}
           </Box>
-          {(r.note || (canReply && !isReplying)) && (
-            <Box flexDirection="row" alignItems="flex-start" justifyContent="flex-end" gap={1}>
-              {r.note && (
-                <Box flexGrow={1} flexShrink={1}>
-                  <Text {...noteColor}>{r.note}</Text>
-                </Box>
-              )}
-              {canReply && !isReplying && btn(`reply-${r.id}`, 'Ответить', false, () => void update($, replyTo, () => r.id))}
-            </Box>
+          {open && !isDrawn && (
+            <Button key={`open-${r.id}`} {...pick(stateOf(r) === 'attention')} onPress={open}>
+              {t('Перейти', 'Open')}
+            </Button>
           )}
-          {isReplying && (
-            <Box flexDirection="column" gap="xs">
-              {/* Ответ будит сессию: если кэш остывает или остыл, цена видна до отправки */}
-              <Input
-                key={`text-${r.id}`}
-                autoFocus
-                placeholder={r.coldPct !== null ? `Ответ перечитает контекст: около ${num(r.coldPct)}% лимита` : 'Ответ в сессию'}
-                submitLabel="Отправить"
-                onSubmit={value => void sendReply($, r, value)}
-              />
-              <Box flexDirection="row" gap={1}>
-                {btn('reply-off', 'Отмена', false, () => void update($, replyTo, () => null))}
+          {r.note && <Text {...noteColor}>{r.note}</Text>}
+        </Box>
+      )
+    }
+    // Картинки сжимаются вместе с панелью, а обычным кнопкам нужен перенос
+    const rowFit = isDrawn ? {} : { flexWrap: 'wrap' as const, gap: 'xs' as const }
+
+    const change = (fn: (l: Layout) => Layout) => () => void changeLayout($, fn)
+    const toggleArranging = () => void update($, arranging, isOn => !isOn)
+    const blockName = (id: BlockId) => {
+      const b = BLOCKS.find(x => x.id === id)
+
+      return b ? t(b.label, b.en) : id
+    }
+    const content = (id: BlockId) => {
+      if (id === 'gauges') return draw(gaugesSvg(lim, tz))
+      if (id === 'forecast') return draw(forecastSvg(s, lim, now, tz))
+      if (id === 'actions') {
+        return (
+          // Сжатие главным при тяжёлом контексте, справа страна и скорость
+          <Box flexDirection="row" alignItems="flex-start" justifyContent="space-between" gap="xs">
+            <Box width="71%" flexShrink={1} flexDirection="column" gap="xs">
+              <Box flexDirection="row" justifyContent="space-between" {...rowFit}>
+                {btn(
+                  'compact',
+                  busyCompact
+                    ? t('Сжимаю…', 'Compacting…')
+                    : ctx
+                      ? t(`Сжать · ${kilo(ctx)}`, `Compact · ${kilo(ctx)}`)
+                      : t('Сжать', 'Compact'),
+                  ctx >= HEAVY_CTX,
+                  ACT_CHIP,
+                  () => void compactNow($),
+                )}
+                {btn('status', t('Статус', 'Status'), false, ACT_CHIP, () => void ask($, asks().status))}
+              </Box>
+              <Box flexDirection="row" justifyContent="space-between" {...rowFit}>
+                {btn('report', t('Итог', 'Report'), false, ACT_CHIP, () => void ask($, asks().report))}
+                {btn('check', t('Проверка', 'Check'), false, ACT_CHIP, () => void ask($, asks().check))}
               </Box>
             </Box>
-          )}
+            <Box width="27%" flexShrink={0} flexDirection="row" justifyContent="flex-end">
+              {draw(netSvg(netNow))}
+            </Box>
+          </Box>
+        )
+      }
+      if (!s) return null
+      if (id === 'week') return draw(weekSvg(s, lim, now, tz))
+      if (id === 'hours') return draw(hoursSvg(s, now, tz))
+      if (id === 'spend') return draw(spendSvg(s))
+
+      return (
+        <Box flexDirection="column" gap="xs">
+          {draw(sessionsHeadSvg(s))}
+          {s.sessions.map(sessionRow)}
         </Box>
+      )
+    }
+    // Перетаскивания у панели нет: порядок меняют стрелки
+    const tools = (id: BlockId, isFolded: boolean) => (
+      <Box flexDirection="row" alignItems="center" justifyContent="space-between" {...rowFit}>
+        <Box width="40%">{draw(blockLabelSvg(blockName(id)))}</Box>
+        {btn(`block-up-${id}`, '▲', false, TOOL_CHIP, change(l => ({ ...l, order: moved(l, id, -1) })))}
+        {btn(`block-down-${id}`, '▼', false, TOOL_CHIP, change(l => ({ ...l, order: moved(l, id, 1) })))}
+        {btn(`block-fold-${id}`, isFolded ? '+' : '−', false, TOOL_CHIP, change(l => ({ ...l, folded: toggled(l.folded, id) })))}
+        {btn(`block-close-${id}`, '×', false, TOOL_CHIP, change(l => ({ ...l, closed: toggled(l.closed, id) })))}
+      </Box>
+    )
+    const block = (id: BlockId) => {
+      const isFolded = view.folded.includes(id)
+      const body = isFolded ? null : content(id)
+      if (isArranging) {
+        return (
+          <Box key={id} flexDirection="column" gap="xs">
+            {tools(id, isFolded)}
+            {body}
+          </Box>
+        )
+      }
+      // Свёрнутый блок остаётся полоской с названием: нажатие разворачивает его
+      if (isFolded) {
+        return btn(`unfold-${id}`, `${blockName(id)} ▾`, false, { w: C.flat ? W : OUT_W, h: 26, width: '100%' }, change(l => ({ ...l, folded: toggled(l.folded, id) })))
+      }
+
+      return (
+        body && (
+          <Box key={id} flexDirection="column">
+            {body}
+          </Box>
+        )
       )
     }
 
     return (
       <Box flexDirection="column" gap={1} {...backdrop}>
-        <Box flexDirection="row" gap="xs">
-          {LOOKS.map(look => btn(`style-${look.id}`, look.label, look.id === C.id, () => void chooseStyle($, look.id)))}
+        <Box flexDirection="row" justifyContent="space-between" {...rowFit}>
+          {LOOKS.map(look => btn(`style-${look.id}`, t(look.label, look.en), look.id === C.id, STYLE_CHIP, () => void chooseStyle($, look.id)))}
+          {(['ru', 'en'] as const).map(id => btn(`lang-${id}`, id.toUpperCase(), id === LANG, LANG_CHIP, () => void chooseLang($, id)))}
+          {btn('arrange', t('Блоки', 'Blocks'), isArranging, LANG_CHIP, toggleArranging, BLOCKS_MARK)}
         </Box>
-        {draw(gaugesSvg(lim, tz))}
-        {/* Кнопки сразу под кольцами: сжатие видно без прокрутки, главным при тяжёлом контексте. Справа страна и скорость */}
-        <Box flexDirection="row" alignItems="flex-start" justifyContent="space-between" gap="xs">
-          <Box flexDirection="column" gap="xs" flexShrink={1}>
-            <Box flexDirection="row">
-              {btn(
-                'compact',
-                busyCompact ? 'Сжимаю…' : ctx ? `Сжать контекст · ${kilo(ctx)}` : 'Сжать контекст',
-                ctx >= HEAVY_CTX,
-                () => void compactNow($),
-              )}
-            </Box>
-            <Box flexDirection="row" flexWrap="wrap" gap="xs">
-              {btn('status', 'Статус', false, () => void ask($, ASKS.status))}
-              {btn('report', 'Итог', false, () => void ask($, ASKS.report))}
-              {btn('check', 'Проверка', false, () => void ask($, ASKS.check))}
-            </Box>
-          </Box>
-          <Box width="30%" flexShrink={0}>
-            {draw(netSvg(netNow))}
-          </Box>
-        </Box>
-        {draw(forecastSvg(s, lim, now, tz))}
-        {s && draw(weekSvg(s, lim, now, tz))}
-        {s && (
-          <Box flexDirection="column" gap="xs">
-            {draw(sessionsHeadSvg(s))}
-            {s.sessions.map(sessionRow)}
+        {view.order.filter(id => !view.closed.includes(id)).map(id => block(id))}
+        {isArranging && (
+          <Box flexDirection="row" flexWrap="wrap" gap="xs">
+            {view.closed.map(id => btn(`block-open-${id}`, `+ ${blockName(id)}`, false, OPEN_CHIP, change(l => ({ ...l, closed: toggled(l.closed, id) }))))}
+            {btn('layout-reset', t('Как было', 'Reset'), false, OPEN_CHIP, change(() => FIRST_LAYOUT))}
+            {btn('arrange-done', t('Готово', 'Done'), true, OPEN_CHIP, toggleArranging)}
           </Box>
         )}
-        {s && draw(hoursSvg(s, now, tz))}
-        {s && draw(spendSvg(s))}
-        {!s && <Text {...noteColor}>Собираю данные…</Text>}
+        {!s && <Text {...noteColor}>{t('Собираю данные…', 'Collecting data…')}</Text>}
         {err && <Text color="error">{err}</Text>}
-        <Box flexDirection="row" gap={1}>
+        <Box flexDirection="row" alignItems="center" justifyContent="space-between" gap={1}>
           <Text {...noteColor}>
-            {s ? `Обновлено ${clock(s.at, tz)} · 1% лимита ≈ ${thousands(s.cal)} ед.` : 'Первое обновление…'}
+            {s
+              ? t(`Обновлено ${clock(s.at, tz)} · 1% лимита ≈ ${thousands(s.cal)} ед.`, `Updated ${clock(s.at, tz)} · 1% of the limit ≈ ${thousands(s.cal)} units`)
+              : t('Первое обновление…', 'First update…')}
           </Text>
-          {btn('refresh', 'Обновить', false, () => void refresh($, true))}
+          {btn('refresh', t('Обновить', 'Refresh'), false, LOW_CHIP, () => void refresh($, true))}
         </Box>
       </Box>
     )

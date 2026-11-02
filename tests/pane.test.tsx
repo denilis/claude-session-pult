@@ -60,6 +60,13 @@ const PANE = {
 
 const sources = async (ui: { findAll: (q: { type: string }) => Promise<{ props: Record<string, unknown> }[]> }) =>
   (await ui.findAll({ type: 'Svg' })).map(el => ({ alt: String(el.props.alt), source: String(el.props.source) }))
+// Подписи кнопок: на desktop подпись в картинке под прозрачной кнопкой, в остальных приложениях у самой кнопки
+const shown = async (ui: Parameters<typeof sources>[0]) => [
+  ...(await sources(ui)).map(c => c.alt),
+  ...(await ui.findAll({ type: 'Button' })).map(b => String(b.props.label)),
+]
+// Без кнопок-картинок: у них своя рамка
+const charts = async (ui: Parameters<typeof sources>[0]) => (await sources(ui)).filter(c => !c.source.includes('vector-effect'))
 
 test('пульт рисует кольца, прогноз, сессии разным цветом и кнопку сжатия', async ($, on) => {
   mock.clock(on, { now: NOW })
@@ -74,7 +81,7 @@ test('пульт рисует кольца, прогноз, сессии раз�
 
   for (const surface of ['desktop', 'vscode'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
-    const [gauges, , forecast, week, head, rowA, rowCase, rowB, hours, spend] = await sources(ui)
+    const [gauges, , forecast, week, head, rowA, rowCase, rowB, hours, spend] = await charts(ui)
     expect(gauges?.alt).toBe('Лимит 5 часов 17%, неделя 72%, контекст 36%')
     expect(forecast?.alt).toContain('кончится ≈ 15:56')
     expect(week?.alt).toBe('Недельное окно: 72%, кончится ≈ 31 окт 01:00')
@@ -82,27 +89,30 @@ test('пульт рисует кольца, прогноз, сессии раз�
     expect(week?.source).toContain('>пн</text>')
     // Подпись прогноза стоит ниже заголовка и не наезжает на него
     expect(forecast?.source).toContain('y="29" text-anchor="end" class="t" style="fill:#E8A26B">кончится')
-    expect(head?.alt).toBe('Сессии: работают 1, ждут 1, стоп 1, агентов 2')
-    // Статусы различаются цветом полоски: зелёный, золото, приглушённый
-    expect(rowA?.source).toContain('rx="1.5" fill="#7FBF8E"')
-    expect(rowCase?.source).toContain('rx="1.5" fill="#E7C989"')
-    expect(rowB?.source).toContain('rx="1.5" fill="#9A938A"')
+    expect(head?.alt).toBe('Сессии: внимание 1, работают 1, ждут 0, стоп 1, агентов 2')
+    // Статус показывает цвет строки: зелёный работает, красный требует внимания, серый остановлена
+    expect(rowA?.source).toContain('rx="2" fill="#7FBF8E"')
+    expect(rowCase?.source).toContain('rx="2" fill="#E5604D"')
+    expect(rowB?.source).toContain('rx="2" fill="#9A938A"')
     expect(rowCase?.source).toContain('Тестовый кейс &amp; &lt;пациент&gt;')
     expect(rowCase?.alt).toBe('Тестовый кейс & <пациент>: ждёт вас, 5 мин, контекст 120 тыс.')
     expect(rowB?.source).toContain('❄ 3,5%')
-    // Со ссылкой статус рисует кнопка, без ссылки он остаётся на картинке
-    expect(rowCase?.source).toContain('viewBox="0 0 196 44"')
+    // Строка шириной с карточки: со ссылкой справа знак Enter, без ссылки статус подписан на картинке
+    expect(rowA?.source).toContain('viewBox="0 0 320 44"')
+    expect(rowCase?.source).toContain('viewBox="0 0 320 44"')
     expect(rowB?.source).toContain('viewBox="0 0 320 44"')
+    expect(rowA?.source).toContain('stroke-linejoin="round"')
+    expect(rowB?.source).not.toContain('stroke-linejoin="round"')
     expect(rowB?.source).toContain('остановлена</text>')
-    expect((await ui.find({ key: 'open-0b67965a' }))?.text).toBe('ждёт вас')
+    expect(await ui.find({ key: 'open-0b67965a' })).toBeDefined()
+    expect(await ui.find({ key: 'open-14815d4b' })).toBeDefined()
     expect(await ui.find({ key: 'open-a97eb71a' })).toBeUndefined()
-    // Что ждёт сессия видно сразу, ответить можно только той, что ждёт, и не самой себе
+    // Что ждёт сессия видно сразу, а отвечают в самом чате: кнопки ответа нет
     expect((await ui.find({ type: 'Text', text: /в этой же папке/ }))?.text).toBe('Доделать его в этой же папке?')
-    expect((await ui.find({ key: 'reply-0b67965a' }))?.text).toBe('Ответить')
-    expect(await ui.find({ key: 'reply-14815d4b' })).toBeUndefined()
+    expect(await ui.find({ key: 'reply-0b67965a' })).toBeUndefined()
     expect(hours?.alt).toContain('110%')
     expect(spend?.alt).toContain('opus-5-5 99%')
-    expect((await ui.find({ key: 'compact' }))?.text).toBe('Сжать контекст · 356K')
+    expect(await shown(ui)).toContain('Сжать · 356K')
     await ui.unmount()
   }
 })
@@ -119,35 +129,33 @@ test('оформление меняется кнопками сверху, за�
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   const row = async () => (await sources(ui)).find(c => c.alt.startsWith('Тестовый кейс'))
-  const button = async (key: string) => (await ui.find({ key }))?.props as { variant?: string; dimColor?: boolean; plain?: boolean }
+  const chip = async (alt: string) => (await sources(ui)).find(c => c.alt === alt)?.source
 
-  // Золото по умолчанию: свой фон панели, поэтому каждая кнопка плотная, иначе подпись сольётся с ним
-  expect((await row())?.source).toContain('rx="1.5" fill="#E7C989"')
-  for (const key of ['style-color', 'style-gold', 'compact', 'status', 'open-0b67965a', 'reply-0b67965a', 'refresh']) {
-    expect((await button(key)).variant).toBe('primary')
+  // Золото по умолчанию: кнопки нарисованы, рамка тонкая, шрифт как у страны; нажатие ловит прозрачная кнопка поверх
+  expect((await row())?.source).toContain('rx="2" fill="#E5604D"')
+  expect(await chip('Статус')).toContain('stroke="#D4AF6A" stroke-width="1"')
+  expect(await chip('Статус')).toContain('font-size:11.5px')
+  expect(await chip('Золото')).toContain('11.5px;font-weight:600')
+  expect(await chip('Цвет')).not.toContain('11.5px;font-weight:600')
+  for (const key of ['style-color', 'style-gold', 'lang-ru', 'compact', 'status', 'open-0b67965a', 'refresh']) {
+    expect((await ui.find({ key }))?.props.plain).toBe(true)
   }
-  expect((await button('style-gold')).dimColor).toBe(false)
-  expect((await button('style-color')).dimColor).toBe(true)
-  // Золотая окантовка вокруг каждой кнопки и подпись меньше обычной
-  const framed = async () => (await ui.findAll({ type: 'Box' })).filter(b => b.props.borderColor === '#D4AF6A').length
-  expect(await framed()).toBeGreaterThan(6)
-  expect((await ui.find({ type: 'Text', text: 'Статус' }))?.props.size).toBe('footnote')
+  // Строка выше кнопки, поэтому нажатие ловят две кнопки
+  expect(await ui.find({ key: 'open-0b67965a-1' })).toBeDefined()
 
-  // Цветной: как раньше, следует за темой приложения, кнопки обычные
+  // Цветной: как раньше, следует за темой приложения
   await ui.press({ key: 'style-color' })
   const color = await row()
-  expect(color?.source).toContain('fill="#f59e0b" fill-opacity=".16"')
+  expect(color?.source).toContain('fill="#ef4444" fill-opacity=".16"')
   expect(color?.source).toContain('prefers-color-scheme: dark')
-  expect((await sources(ui))[0]?.source).toContain('r="34"')
-  expect((await button('style-color')).variant).toBe('primary')
-  expect((await button('status')).variant).toBe('secondary')
-  expect((await button('refresh')).variant).toBe('secondary')
-  expect(await framed()).toBe(0)
+  expect((await sources(ui)).some(c => c.source.includes('r="34"'))).toBe(true)
+  expect(await chip('Цвет')).toContain('fill="#3b82f6" fill-opacity=".16"')
+  expect(await chip('Статус')).toContain('class="grid"')
 
   // Синий: свои краски и уже без тёмной темы в картинке
   await ui.press({ key: 'style-blue' })
   const blue = await row()
-  expect(blue?.source).toContain('#0B4FD6')
+  expect(blue?.source).toContain('#D92D20')
   expect(blue?.source).not.toContain('prefers-color-scheme')
   await ui.unmount()
 })
@@ -169,7 +177,78 @@ test('выбор оформления общий для сессий: панел
   // Без записи в хранилище следующее обновление вернуло бы цветной
   await ui.press({ key: 'style-blue' })
   await $.command.run({ command: 'pult', args: '' } as never)
-  expect(await row()).toContain('#0B4FD6')
+  expect(await row()).toContain('#D92D20')
+  await ui.unmount()
+})
+
+test('блоки: порядок, сворачивание, закрытие и возврат, выбор общий для сессий', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  mock.store(on)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.id', () => ({ value: 'test-session' }))
+  on('session.usage', () => ({ value: USAGE }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('process.run', answerSnapshot)
+  await $.command.run({ command: 'pult', args: '' } as never)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const place = async (text: string) => (await charts(ui)).findIndex(c => c.alt.includes(text))
+  const [SESSIONS, HOURS, MODELS] = ['Сессии:', '110%', 'opus-5-5 99%']
+  const weekAlt = async () => (await charts(ui))[3]?.alt ?? ''
+  const week = await weekAlt()
+
+  // Пока настройка выключена, у блоков нет своих кнопок
+  expect(await ui.find({ key: 'block-up-hours' })).toBeUndefined()
+  await ui.press({ key: 'arrange' })
+  expect(await ui.find({ key: 'block-up-hours' })).toBeDefined()
+
+  // Вверх: часы встают перед сессиями. Без записи в хранилище следующее обновление вернуло бы порядок
+  expect(await place(HOURS)).toBeGreaterThan(await place(SESSIONS))
+  await ui.press({ key: 'block-up-hours' })
+  await $.command.run({ command: 'pult', args: '' } as never)
+  expect(await place(HOURS)).toBeLessThan(await place(SESSIONS))
+
+  // Закрытый блок исчезает и возвращается кнопкой, соседом для стрелки он не считается
+  await ui.press({ key: 'block-close-week' })
+  expect(await place(week)).toBe(-1)
+  await ui.press({ key: 'block-up-spend' })
+  await ui.press({ key: 'block-up-spend' })
+  expect(await place(MODELS)).toBeLessThan(await place(HOURS))
+  await ui.press({ key: 'block-open-week' })
+  expect(await place(week)).toBeGreaterThan(-1)
+
+  // Свёрнутый блок после настройки остаётся полоской с названием
+  await ui.press({ key: 'block-fold-spend' })
+  await ui.press({ key: 'arrange-done' })
+  expect(await ui.find({ key: 'block-up-hours' })).toBeUndefined()
+  expect(await place(MODELS)).toBe(-1)
+  expect(await shown(ui)).toContain('Модели ▾')
+  await ui.press({ key: 'unfold-spend' })
+  expect(await place(MODELS)).toBeGreaterThan(-1)
+
+  await ui.press({ key: 'arrange' })
+  await ui.press({ key: 'layout-reset' })
+  expect(await place(HOURS)).toBeGreaterThan(await place(SESSIONS))
+  expect(await place(MODELS)).toBeGreaterThan(await place(HOURS))
+  await ui.unmount()
+})
+
+test('блоки: старое сохранённое значение не ломает панель', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  mock.store(on, { layout: { order: ['spend', 'старый блок'], folded: ['hours'], closed: ['week'] } })
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.id', () => ({ value: 'test-session' }))
+  on('session.usage', () => ({ value: USAGE }))
+  on('process.run', answerSnapshot)
+  await $.command.run({ command: 'pult', args: '' } as never)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const all = await charts(ui)
+  // Модели первые, остальные блоки на месте, свёрнутые и закрытые учтены
+  expect(all[0]?.alt).toContain('opus-5-5 99%')
+  expect(all.some(c => c.alt.startsWith('Лимит 5 часов'))).toBe(true)
+  expect(await shown(ui)).toContain('По часам ▾')
+  expect(all.some(c => c.alt.includes('110%'))).toBe(false)
   await ui.unmount()
 })
 
@@ -216,6 +295,48 @@ test('квадрат: страна и скорость, замер раз в п�
   await ui.unmount()
 })
 
+test('язык: переключатель рядом со стилями, панель и просьбы на английском, выбор общий для сессий', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  mock.store(on)
+  const sent: string[] = []
+  on('prompt.submit', (_, e) => {
+    sent.push(e.text)
+    return { text: e.text }
+  })
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.id', () => ({ value: 'test-session' }))
+  on('session.usage', () => ({ value: USAGE }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('process.run', (_, e) => {
+    const argv = (e as unknown as { argv: string[] }).argv ?? []
+    if (!argv.some(a => String(a).includes('netcheck'))) return answerSnapshot()
+    return { value: { exitCode: 0, stdout: JSON.stringify({ code: 'SG', country: 'Сингапур', mbit: 75.6 }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  await $.command.run({ command: 'pult', args: '' } as never)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await shown(ui)).toContain('RU')
+  expect(await shown(ui)).toContain('Статус')
+  expect((await sources(ui)).map(c => c.alt)).toContain('Сингапур, 76 Мбит/с')
+
+  await ui.press({ key: 'lang-en' })
+  expect(await shown(ui)).toContain('Status')
+  expect(await ui.find({ key: 'open-0b67965a' })).toBeDefined()
+  expect(await shown(ui)).toContain('Gold')
+  expect(await shown(ui)).toContain('Compact · 356K')
+  const all = await sources(ui)
+  expect(all.map(c => c.alt)).toContain('Singapore, 76 Mbit/s')
+  expect(all.map(c => c.alt)).toContain('5-hour limit 17%, week 72%, context 36%')
+  expect(all.some(c => c.source.includes('ATTENTION'))).toBe(true)
+  // Числа с точкой, а кириллицы нет ни в подписях графиков, ни в названии дня недели
+  expect(all.some(c => c.source.includes('pace 18.0% per day'))).toBe(true)
+  for (const chart of all) expect(chart.source.replace(/Тестовый[^<]*|<title>[^<]*<\/title>/g, '')).not.toMatch(/[А-Яа-я]/)
+
+  await ui.press({ key: 'status' })
+  expect(sent.at(-1)).toContain('Session status')
+  await ui.unmount()
+})
+
 test('кнопка сжимает с инструкцией, а во время ответа ставит /compact в очередь', async ($, on) => {
   mock.clock(on, { now: NOW })
   const toasts: string[] = []
@@ -249,7 +370,34 @@ test('кнопка сжимает с инструкцией, а во время 
   await ui.press({ key: 'compact' })
   expect(queued[0]).toContain('что сделано и что осталось')
   expect(toasts).toContain('Модель отвечает: сожму, как только закончит')
-  expect((await ui.find({ key: 'compact' }))?.text).toBe('Сжать контекст · 356K')
+  expect(await shown(ui)).toContain('Сжать · 356K')
+  await ui.unmount()
+})
+
+test('подпись Сжимаю не застревает, если сжатие оборвала перезагрузка мода', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  on('session.id', () => ({ value: 'test-session' }))
+  on('session.usage', () => ({ value: USAGE }))
+  on('process.run', () => ({
+    value: { exitCode: 0, stdout: JSON.stringify(SNAPSHOT), stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+  }))
+  on('command.register', () => ({ value: { command: 'pult' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.compact', () => {
+    throw new Error('a turn is running')
+  })
+  // Прерванная функция сжатия ответа так и не дождётся
+  on('command.run', { command: 'compact' }, () => new Promise<never>(() => undefined))
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  void ui.press({ key: 'compact' })
+  let seen: string[] = []
+  for (let i = 0; i < 50 && !seen.includes('Сжимаю…'); i += 1) seen = await shown(ui)
+  expect(seen).toContain('Сжимаю…')
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  expect(await shown(ui)).toContain('Сжать · 356K')
   await ui.unmount()
 })
 
@@ -257,7 +405,7 @@ test('без данных панель не падает', async ($, on) => {
   mock.clock(on, { now: NOW })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /Собираю данные/ }))?.text).toBe('Собираю данные…')
-  expect((await sources(ui))[2]?.alt).toBe('Нет данных об окне')
+  expect((await charts(ui))[2]?.alt).toBe('Нет данных об окне')
   await ui.unmount()
 })
 
@@ -340,8 +488,7 @@ test('сессия, что вот-вот остынет, показывает ц
   expect(row?.source).toContain('❄ 10 мин · 2,5%')
   expect(row?.source).toContain('style="fill:#E8A26B"')
   expect(row?.alt).toContain('кэш остынет через 10 мин, потом ответ обойдётся в 2,5% лимита')
-  expect((await ui.find({ key: 'open-cafe0001' }))?.props.variant).toBe('primary')
-  await ui.press({ key: 'reply-cafe0001' })
+  expect(row?.source).toContain('rx="2" fill="#E5604D"')
   await ui.unmount()
 })
 
@@ -384,56 +531,6 @@ test('уведомление о ждущей сессии: один раз, то
   expect(shells).toHaveLength(1)
 })
 
-test('ответ из панели уходит в сессию с пометкой, чей он, и предупреждает о цене', async ($, on) => {
-  mock.clock(on, { now: NOW })
-  const sent: { to: string; text: string }[] = []
-  const toasts: string[] = []
-  let refuse: string | undefined
-  on('ui.toast', (_, e) => {
-    toasts.push(e.text)
-    return { value: undefined }
-  })
-  on('session.send', (_, e) => {
-    sent.push({ to: e.to, text: e.text })
-    return refuse ? { isDelivered: false, reason: refuse } : { isDelivered: true }
-  })
-  on('session.id', () => ({ value: 'test-session' }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('session.usage', () => ({ value: USAGE }))
-  on('process.run', answerWith([{ ...waitingRow, coldPct: 2.5 }]))
-  await $.command.run({ command: 'pult', args: '' } as never)
-
-  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect(await ui.find({ key: 'text-cafe0001' })).toBeUndefined()
-  await ui.press({ key: 'reply-cafe0001' })
-  expect((await ui.find({ key: 'text-cafe0001' }))?.props.placeholder).toContain('около 2,5% лимита')
-
-  // Пустой ответ никуда не идёт, отказ оставляет поле открытым
-  await ui.input({ key: 'text-cafe0001', text: '   ' })
-  expect(sent).toHaveLength(0)
-  refuse = 'сессия занята'
-  await ui.input({ key: 'text-cafe0001', text: 'Да, второй' })
-  expect(toasts).toContain('Не дошло: сессия занята')
-  expect(await ui.find({ key: 'text-cafe0001' })).toBeDefined()
-
-  refuse = undefined
-  await ui.input({ key: 'text-cafe0001', text: 'Да, второй' })
-  expect(sent.at(-1)).toEqual({
-    to: 'local_0b67965a-0000-0000-0000-000000000000',
-    text: 'Ответ пользователя из панели «Пульт сессий»: Да, второй',
-  })
-  expect(toasts).toContain('Ответ ушёл в «Другая сессия»')
-  expect(await ui.find({ key: 'text-cafe0001' })).toBeUndefined()
-
-  // Отмена закрывает поле без отправки
-  const before = sent.length
-  await ui.press({ key: 'reply-cafe0001' })
-  await ui.press({ key: 'reply-off' })
-  expect(await ui.find({ key: 'text-cafe0001' })).toBeUndefined()
-  expect(sent).toHaveLength(before)
-  await ui.unmount()
-})
-
 test('прогноз недели: нет данных, темп ещё не ясен, и уведомление, что кончится до сброса', async ($, on) => {
   mock.clock(on, { now: NOW })
   mock.store(on)
@@ -454,13 +551,13 @@ test('прогноз недели: нет данных, темп ещё не я�
   })
   await $.command.run({ command: 'pult', args: '' } as never)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect((await sources(ui))[3]?.alt).toBe('Нет данных о недельном лимите')
+  expect((await charts(ui))[3]?.alt).toBe('Нет данных о недельном лимите')
   await ui.unmount()
 
   answer = answerWith([], { week: { ...SNAPSHOT.week, perDay: null, hitAt: null, endPct: null } })
   await $.command.run({ command: 'pult', args: '' } as never)
   const fresh = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect((await sources(fresh))[3]?.alt).toContain('темп станет ясен')
+  expect((await charts(fresh))[3]?.alt).toContain('темп станет ясен')
   await fresh.unmount()
   expect(toasts.filter(t => t.startsWith('Недельный лимит кончится'))).toHaveLength(0)
 
@@ -604,6 +701,6 @@ test('без Python пульт подсказывает, что поставит
   expect(tried).toEqual(['py', 'python', 'python3'])
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /Python 3/ }))?.text).toContain('python.org')
-  expect((await ui.find({ key: 'compact' }))?.text).toBe('Сжать контекст · 356K')
+  expect(await shown(ui)).toContain('Сжать · 356K')
   await ui.unmount()
 })

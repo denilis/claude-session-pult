@@ -1,5 +1,11 @@
 // Оформление панели: цветное, золотое, синее
 export type StyleId = 'color' | 'gold' | 'blue'
+export type LangId = 'ru' | 'en'
+// Блоки панели: порядок, свёрнутые и закрытые общие для всех сессий
+export type BlockId = 'gauges' | 'actions' | 'forecast' | 'week' | 'sessions' | 'hours' | 'spend'
+export type Layout = { order: BlockId[]; folded: BlockId[]; closed: BlockId[] }
+// Цвет строки сессии
+export type RowState = 'attention' | 'running' | 'waiting' | 'stopped'
 
 // Страна выхода в интернет и скорость загрузки: замер один на все сессии
 export type Net = { at: number; code: string; country: string | null; mbit: number | null }
@@ -86,10 +92,11 @@ declare module 'claude-code' {
       coldHidden: Shaped<number | null>
       // Очистка после сохранения памяти: 'queued' до начала хода, затем id этого хода
       pendingClear: Shaped<string | null>
-      // id строки сессии, в которую сейчас пишут ответ
-      replyTo: Shaped<string | null>
       style: Shaped<StyleId>
+      lang: Shaped<LangId>
       net: Shaped<Net | null>
+      layout: Shaped<Layout>
+      arranging: Shaped<boolean>
     }
   }
 }
