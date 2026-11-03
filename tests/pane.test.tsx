@@ -136,21 +136,20 @@ test('оформление меняется кнопками сверху, за�
   expect(await chip('Статус')).toContain('stroke="#D4AF6A" stroke-width="1"')
   expect(await chip('Статус')).toContain('font-size:11.5px')
   expect(await chip('Золото')).toContain('11.5px;font-weight:600')
-  expect(await chip('Цвет')).not.toContain('11.5px;font-weight:600')
-  for (const key of ['style-color', 'style-gold', 'lang-ru', 'compact', 'status', 'open-0b67965a', 'refresh']) {
+  expect(await chip('Кость')).not.toContain('11.5px;font-weight:600')
+  for (const key of ['style-ivory', 'style-gold', 'lang-ru', 'compact', 'status', 'open-0b67965a', 'refresh']) {
     expect((await ui.find({ key }))?.props.plain).toBe(true)
   }
   // Строка выше кнопки, поэтому нажатие ловят две кнопки
   expect(await ui.find({ key: 'open-0b67965a-1' })).toBeDefined()
 
-  // Цветной: как раньше, следует за темой приложения
-  await ui.press({ key: 'style-color' })
-  const color = await row()
-  expect(color?.source).toContain('fill="#ef4444" fill-opacity=".16"')
-  expect(color?.source).toContain('prefers-color-scheme: dark')
-  expect((await sources(ui)).some(c => c.source.includes('r="34"'))).toBe(true)
-  expect(await chip('Цвет')).toContain('fill="#3b82f6" fill-opacity=".16"')
-  expect(await chip('Статус')).toContain('class="grid"')
+  // Кость: краски «Слоновой кости», тревога красным сигналом, рамки бирюзой, без тёмной темы в картинке
+  await ui.press({ key: 'style-ivory' })
+  const ivory = await row()
+  expect(ivory?.source).toContain('rx="2" fill="#C0504D"')
+  expect(ivory?.source).not.toContain('prefers-color-scheme')
+  expect(await chip('Кость')).toContain('fill="#3FA8A0" fill-opacity=".16"')
+  expect(await chip('Статус')).toContain('stroke="#3FA8A0" stroke-width="1"')
 
   // Фиолет: краски «Ультрафиолета», тревога розовым, без тёмной темы в картинке
   await ui.press({ key: 'style-violet' })
@@ -161,26 +160,28 @@ test('оформление меняется кнопками сверху, за�
   await ui.unmount()
 })
 
-test('кто выбрал прежний Синий, получает Фиолет', async ($, on) => {
-  mock.clock(on, { now: NOW })
-  mock.store(on, { style: 'blue' })
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('session.id', () => ({ value: 'test-session' }))
-  on('session.usage', () => ({ value: USAGE }))
-  on('ui.toast', () => ({ value: undefined }))
-  on('process.run', answerSnapshot)
-  await $.command.run({ command: 'pult', args: '' } as never)
+for (const [old, now, alarm] of [['blue', 'Фиолет', '#F45B96'], ['color', 'Кость', '#C0504D']]) {
+  test(`кто выбрал прежнее оформление ${old}, получает ${now}`, async ($, on) => {
+    mock.clock(on, { now: NOW })
+    mock.store(on, { style: old })
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('session.id', () => ({ value: 'test-session' }))
+    on('session.usage', () => ({ value: USAGE }))
+    on('ui.toast', () => ({ value: undefined }))
+    on('process.run', answerSnapshot)
+    await $.command.run({ command: 'pult', args: '' } as never)
 
-  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  const all = await sources(ui)
-  expect(all.find(c => c.alt.startsWith('Тестовый кейс'))?.source).toContain('#F45B96')
-  expect(all.find(c => c.alt === 'Фиолет')?.source).toContain('11.5px;font-weight:600')
-  await ui.unmount()
-})
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    const all = await sources(ui)
+    expect(all.find(c => c.alt.startsWith('Тестовый кейс'))?.source).toContain(alarm)
+    expect(all.find(c => c.alt === now)?.source).toContain('11.5px;font-weight:600')
+    await ui.unmount()
+  })
+}
 
 test('выбор оформления общий для сессий: панель берёт его из хранилища и записывает новый', async ($, on) => {
   mock.clock(on, { now: NOW })
-  mock.store(on, { style: 'color' })
+  mock.store(on, { style: 'ivory' })
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.id', () => ({ value: 'test-session' }))
   on('session.usage', () => ({ value: USAGE }))
@@ -190,9 +191,9 @@ test('выбор оформления общий для сессий: панел
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   const row = async () => (await sources(ui)).find(c => c.alt.startsWith('Тестовый кейс'))?.source
-  expect(await row()).toContain('fill-opacity=".16"')
+  expect(await row()).toContain('#C0504D')
 
-  // Без записи в хранилище следующее обновление вернуло бы цветной
+  // Без записи в хранилище следующее обновление вернуло бы Кость
   await ui.press({ key: 'style-violet' })
   await $.command.run({ command: 'pult', args: '' } as never)
   expect(await row()).toContain('#F45B96')

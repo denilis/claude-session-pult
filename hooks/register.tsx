@@ -111,8 +111,8 @@ const compactHint = () =>
       'errors and how they were worked around; agreements and prohibitions from the user in this conversation.',
   )
 
-// Оформления на выбор. Золото и Фиолет: один оттенок с градиентом металла, фон карточек внутри картинки,
-// вид не зависит от темы приложения. Цветной: статусы разными цветами, подстраивается под тему приложения
+// Оформления на выбор: одна краска с градиентом, фон карточек внутри картинки, вид не зависит от темы приложения.
+// Плоский вид (flat: цвет по уровню, без карточек, следует за темой приложения) был у Цветного, сейчас его нет ни у одного
 type Look = {
   id: StyleId
   label: string
@@ -143,29 +143,32 @@ type Look = {
   models: [string, string][]
 }
 
-const COLOR: Look = {
-  id: 'color',
-  label: 'Цвет',
-  en: 'Color',
-  flat: true,
+// «Слоновая кость» из библиотеки дашбордов: тёплая бумага, чернильный текст, бирюза для роста, красный только для тревоги
+const IVORY: Look = {
+  id: 'ivory',
+  label: 'Кость',
+  en: 'Ivory',
+  flat: false,
+  page: '#F4EFE9',
   solid: false,
-  ink: '#1f2328',
-  muted: '#6b7280',
-  hi: '#3b82f6',
-  mid: '#06b6d4',
-  lo: '#3b82f6',
-  alarm: '#ef4444',
-  warn: '#f59e0b',
-  good: '#22c55e',
-  track: '#e5e7eb',
-  line: '#d1d5db',
-  cardTop: 'transparent',
-  cardEnd: 'transparent',
-  glow: 'transparent',
-  ctx: '#3b82f6',
-  cold: '#06b6d4',
-  status: { running: '#22c55e', waiting: '#f59e0b', attention: '#ef4444', stopped: '#94a3b8' },
-  models: [['opus', '#8b5cf6'], ['sonnet', '#06b6d4'], ['haiku', '#22c55e'], ['fable', '#f59e0b']],
+  note: '#8B8577',
+  ink: '#232347',
+  muted: '#8B8577',
+  hi: '#3FA8A0',
+  mid: '#3FA8A0',
+  lo: '#A9D4D0',
+  alarm: '#C0504D',
+  warn: '#4A4AA0',
+  good: '#3FA8A0',
+  track: '#E4DCCE',
+  line: '#EAE2D4',
+  cardTop: '#FBF8F4',
+  cardEnd: '#EFE7DC',
+  glow: '#FBF8F4',
+  ctx: '#3FA8A0',
+  cold: '#4A4AA0',
+  status: { running: '#3FA8A0', waiting: '#4A4AA0', attention: '#C0504D', stopped: '#8B8577' },
+  models: [['opus', '#232347'], ['sonnet', '#3FA8A0'], ['haiku', '#A9D4D0'], ['fable', '#4A4AA0']],
 }
 
 // «Золотой нуар»: золото единственная краска, зелёный только для плюсов, персик для тревоги; красный только у строки, требующей внимания
@@ -224,7 +227,7 @@ const VIOLET: Look = {
   models: [['opus', '#A24BFF'], ['sonnet', '#2ED3E8'], ['haiku', '#35D07F'], ['fable', '#F45B96']],
 }
 
-const LOOKS = [COLOR, GOLD, VIOLET]
+const LOOKS = [IVORY, GOLD, VIOLET]
 
 const STATUS: Record<Row['status'], { label: string; en: string }> = {
   running: { label: 'работает', en: 'running' },
@@ -254,9 +257,11 @@ const styleOf = (c: Look) =>
 let C: Look = GOLD
 let STYLE = styleOf(GOLD)
 
-// До 0.9 третьим оформлением был Синий: кто его выбрал, получает Фиолет
+// Прежние оформления: Синий стал Фиолетом, Цвет стал Костью
+const RENAMED: Record<string, StyleId> = { blue: 'violet', color: 'ivory' }
+
 function useLook(id: StyleId) {
-  const wanted: string = id === ('blue' as string) ? 'violet' : id
+  const wanted = RENAMED[id] ?? id
   C = LOOKS.find(look => look.id === wanted) ?? GOLD
   STYLE = styleOf(C)
 }
