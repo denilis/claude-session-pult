@@ -8,7 +8,7 @@ export type Layout = { order: BlockId[]; folded: BlockId[]; closed: BlockId[] }
 export type RowState = 'attention' | 'running' | 'waiting' | 'stopped'
 
 // Страна выхода в интернет и скорость загрузки: замер один на все сессии
-export type Net = { at: number; code: string; country: string | null; mbit: number | null }
+export type Net = { at: number; mbit: number | null }
 
 // Строка сессии из сборщика collector/collect.py
 export type Row = {

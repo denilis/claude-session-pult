@@ -131,7 +131,7 @@ test('оформление меняется кнопками сверху, за�
   const row = async () => (await sources(ui)).find(c => c.alt.startsWith('Тестовый кейс'))
   const chip = async (alt: string) => (await sources(ui)).find(c => c.alt === alt)?.source
 
-  // Золото по умолчанию: кнопки нарисованы, рамка тонкая, шрифт как у страны; нажатие ловит прозрачная кнопка поверх
+  // Золото по умолчанию: кнопки нарисованы, рамка тонкая, шрифт как у подписи квадрата; нажатие ловит прозрачная кнопка поверх
   expect((await row())?.source).toContain('rx="2" fill="#E5604D"')
   expect(await chip('Статус')).toContain('stroke="#D4AF6A" stroke-width="1"')
   expect(await chip('Статус')).toContain('font-size:11.5px')
@@ -274,11 +274,11 @@ test('блоки: старое сохранённое значение не ло
   await ui.unmount()
 })
 
-test('квадрат: страна и скорость, замер раз в полчаса на все сессии, кнопка Обновить мерит сразу', async ($, on) => {
+test('квадрат: скорость, замер раз в полчаса на все сессии, кнопка Обновить мерит сразу', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   mock.store(on)
   let measured = 0
-  let answer: Record<string, unknown> = { code: 'SG', country: 'Сингапур', mbit: 75.6 }
+  let answer: Record<string, unknown> = { mbit: 75.6 }
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.id', () => ({ value: 'test-session' }))
   on('session.usage', () => ({ value: USAGE }))
@@ -298,7 +298,7 @@ test('квадрат: страна и скорость, замер раз в п�
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   const square = async () => (await sources(ui)).find(c => c.source.includes('Мбит/с'))
   expect(measured).toBe(1)
-  expect((await square())?.alt).toBe('Сингапур, 76 Мбит/с')
+  expect((await square())?.alt).toBe('Интернет, 76 Мбит/с')
   expect((await square())?.source).toContain('>76</text>')
 
   // Повторное обновление не мерит, кнопка мерит сразу, через полчаса снова
@@ -311,7 +311,7 @@ test('квадрат: страна и скорость, замер раз в п�
   expect(measured).toBe(3)
 
   // Без сети панель не падает и говорит об этом
-  answer = { code: '', country: null, mbit: null }
+  answer = { mbit: null }
   await ui.press({ key: 'refresh' })
   expect((await square())?.alt).toBe('нет сети, скорость не измерена')
   await ui.unmount()
@@ -332,14 +332,14 @@ test('язык: переключатель рядом со стилями, па�
   on('process.run', (_, e) => {
     const argv = (e as unknown as { argv: string[] }).argv ?? []
     if (!argv.some(a => String(a).includes('netcheck'))) return answerSnapshot()
-    return { value: { exitCode: 0, stdout: JSON.stringify({ code: 'SG', country: 'Сингапур', mbit: 75.6 }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    return { value: { exitCode: 0, stdout: JSON.stringify({ mbit: 75.6 }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   await $.command.run({ command: 'pult', args: '' } as never)
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await shown(ui)).toContain('RU')
   expect(await shown(ui)).toContain('Статус')
-  expect((await sources(ui)).map(c => c.alt)).toContain('Сингапур, 76 Мбит/с')
+  expect((await sources(ui)).map(c => c.alt)).toContain('Интернет, 76 Мбит/с')
 
   await ui.press({ key: 'lang-en' })
   expect(await shown(ui)).toContain('Status')
@@ -347,7 +347,7 @@ test('язык: переключатель рядом со стилями, па�
   expect(await shown(ui)).toContain('Gold')
   expect(await shown(ui)).toContain('Compact · 356K')
   const all = await sources(ui)
-  expect(all.map(c => c.alt)).toContain('Singapore, 76 Mbit/s')
+  expect(all.map(c => c.alt)).toContain('Internet, 76 Mbit/s')
   expect(all.map(c => c.alt)).toContain('5-hour limit 17%, week 72%, context 36%')
   expect(all.some(c => c.source.includes('ATTENTION'))).toBe(true)
   // Числа с точкой, а кириллицы нет ни в подписях графиков, ни в названии дня недели

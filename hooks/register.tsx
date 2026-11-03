@@ -540,7 +540,7 @@ function sessionRowSvg(r: Row) {
   return { source: doc(rowW, h, body), alt }
 }
 
-// Кнопка-картинка: шрифт как у названия страны, рамка в один пиксель, выбранная заметнее
+// Кнопка-картинка: шрифт как у подписи квадрата скорости, рамка в один пиксель, выбранная заметнее
 function chipSvg(c: Chip, text: string, isMain: boolean, mark?: string) {
   const accent = C.flat ? C.ctx : C.mid
   // На тёмном фоне (solid) слабая заливка не видна, выбранную кнопку закрашиваем плотнее
@@ -690,20 +690,10 @@ function spendSvg(s: Snapshot) {
   return { source: svg(58 + s.top.length * 20, body), alt: `${t('Модели', 'Models')}: ${models.map(([m, u]) => `${m} ${Math.round((u / total) * 100)}%`).join(', ')}` }
 }
 
-// Квадрат рядом с кнопками: вверху страна выхода в интернет, внизу скорость на круговой шкале.
+// Квадрат рядом с кнопками: скорость загрузки на круговой шкале.
 // Шкала логарифмическая: разница между 5 и 50 Мбит/с важнее, чем между 300 и 350
 const NET_W = 92
 const NET_H = 74
-
-// Название страны на английском берём у движка; русское уже пришло от замера
-function countryName(n: Net) {
-  if (LANG !== 'en' || !n.code) return n.country
-  try {
-    return new Intl.DisplayNames(['en'], { type: 'region' }).of(n.code) ?? n.code
-  } catch {
-    return n.code
-  }
-}
 
 function netSvg(n: Net | null) {
   const cx = NET_W / 2
@@ -711,7 +701,7 @@ function netSvg(n: Net | null) {
   const r = 21
   const len = Math.PI * r
   const mbit = n?.mbit ?? null
-  const name = n ? (countryName(n) ?? t('нет сети', 'offline')) : t('замеряю', 'measuring')
+  const name = n ? (mbit === null ? t('нет сети', 'offline') : t('Интернет', 'Internet')) : t('замеряю', 'measuring')
   const pos = mbit === null ? 0 : clamp(Math.log10(Math.max(mbit, 1)) / 3, 0, 1)
   const arc = `M${cx - r},${cy} A${r},${r} 0 0 1 ${cx + r},${cy}`
   const stroke = mbit !== null && mbit < 5 ? C.alarm : !C.flat ? 'url(#ring)' : mbit !== null && mbit < 25 ? C.warn : C.good
@@ -783,7 +773,7 @@ async function checkNet($: EngineInterface, force: boolean) {
   if (saved) await update($, net, () => saved)
   if (!force && saved && now - saved.at < NET_EVERY_MS) return
   netBusy = true
-  await $.store.set('net', { code: '', country: null, mbit: null, ...saved, at: now }).catch(() => undefined)
+  await $.store.set('net', { mbit: null, ...saved, at: now }).catch(() => undefined)
   try {
     const script = `${$.plugin.root}/collector/netcheck.py`
     for (const exe of PYTHONS) {
@@ -1239,7 +1229,7 @@ export const register: Register = on => {
       if (id === 'forecast') return draw(forecastSvg(s, lim, now, tz))
       if (id === 'actions') {
         return (
-          // Сжатие главным при тяжёлом контексте, справа страна и скорость
+          // Сжатие главным при тяжёлом контексте, справа скорость
           <Box flexDirection="row" alignItems="flex-start" justifyContent="space-between" gap="xs">
             <Box width="71%" flexShrink={1} flexDirection="column" gap="xs">
               <Box flexDirection="row" justifyContent="space-between" {...rowFit}>
