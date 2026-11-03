@@ -152,11 +152,29 @@ test('оформление меняется кнопками сверху, за�
   expect(await chip('Цвет')).toContain('fill="#3b82f6" fill-opacity=".16"')
   expect(await chip('Статус')).toContain('class="grid"')
 
-  // Синий: свои краски и уже без тёмной темы в картинке
-  await ui.press({ key: 'style-blue' })
-  const blue = await row()
-  expect(blue?.source).toContain('#D92D20')
-  expect(blue?.source).not.toContain('prefers-color-scheme')
+  // Фиолет: краски «Ультрафиолета», тревога розовым, без тёмной темы в картинке
+  await ui.press({ key: 'style-violet' })
+  const violet = await row()
+  expect(violet?.source).toContain('rx="2" fill="#F45B96"')
+  expect(violet?.source).not.toContain('prefers-color-scheme')
+  expect(await chip('Фиолет')).toContain('stroke="#8B30F4" stroke-width="1"')
+  await ui.unmount()
+})
+
+test('кто выбрал прежний Синий, получает Фиолет', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  mock.store(on, { style: 'blue' })
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.id', () => ({ value: 'test-session' }))
+  on('session.usage', () => ({ value: USAGE }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('process.run', answerSnapshot)
+  await $.command.run({ command: 'pult', args: '' } as never)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const all = await sources(ui)
+  expect(all.find(c => c.alt.startsWith('Тестовый кейс'))?.source).toContain('#F45B96')
+  expect(all.find(c => c.alt === 'Фиолет')?.source).toContain('11.5px;font-weight:600')
   await ui.unmount()
 })
 
@@ -175,9 +193,9 @@ test('выбор оформления общий для сессий: панел
   expect(await row()).toContain('fill-opacity=".16"')
 
   // Без записи в хранилище следующее обновление вернуло бы цветной
-  await ui.press({ key: 'style-blue' })
+  await ui.press({ key: 'style-violet' })
   await $.command.run({ command: 'pult', args: '' } as never)
-  expect(await row()).toContain('#D92D20')
+  expect(await row()).toContain('#F45B96')
   await ui.unmount()
 })
 

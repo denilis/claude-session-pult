@@ -1,5 +1,5 @@
 // Оформление панели: цветное, золотое, синее
-export type StyleId = 'color' | 'gold' | 'blue'
+export type StyleId = 'color' | 'gold' | 'violet'
 export type LangId = 'ru' | 'en'
 // Блоки панели: порядок, свёрнутые и закрытые общие для всех сессий
 export type BlockId = 'gauges' | 'actions' | 'forecast' | 'week' | 'sessions' | 'hours' | 'spend'

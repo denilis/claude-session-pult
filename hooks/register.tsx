@@ -111,7 +111,7 @@ const compactHint = () =>
       'errors and how they were worked around; agreements and prohibitions from the user in this conversation.',
   )
 
-// Оформления на выбор. Золото и Синий: один оттенок с градиентом металла, фон карточек внутри картинки,
+// Оформления на выбор. Золото и Фиолет: один оттенок с градиентом металла, фон карточек внутри картинки,
 // вид не зависит от темы приложения. Цветной: статусы разными цветами, подстраивается под тему приложения
 type Look = {
   id: StyleId
@@ -196,33 +196,35 @@ const GOLD: Look = {
   models: [['opus', '#E7C989'], ['sonnet', '#8A6B33'], ['haiku', '#7FBF8E'], ['fable', '#E8A26B']],
 }
 
-// Светлые карточки и глубокий синий: спокойный деловой вид
-const BLUE: Look = {
-  id: 'blue',
-  label: 'Синий',
-  en: 'Blue',
+// «Ультрафиолет» из библиотеки дашбордов: фиолет главная краска, плюсы зелёным, розовый для тревоги, циан для остывшего кэша
+const VIOLET: Look = {
+  id: 'violet',
+  label: 'Фиолет',
+  en: 'Violet',
   flat: false,
-  solid: false,
-  ink: '#0B1F4B',
-  muted: '#5F6B85',
-  hi: '#3D7BFF',
-  mid: '#0B4FD6',
-  lo: '#002882',
-  alarm: '#E8590C',
-  warn: '#0B4FD6',
-  good: '#1F9D6B',
-  track: '#E4E9F5',
-  line: 'rgba(0,40,130,.14)',
-  cardTop: '#FFFFFF',
-  cardEnd: '#F5F7FC',
-  glow: '#E3ECFF',
-  ctx: '#0B4FD6',
-  cold: '#0B4FD6',
-  status: { running: '#1F9D6B', waiting: '#E5A100', attention: '#D92D20', stopped: '#8A94A8' },
-  models: [['opus', '#002882'], ['sonnet', '#3D7BFF'], ['haiku', '#1F9D6B'], ['fable', '#E8590C']],
+  page: '#07070C',
+  solid: true,
+  note: '#8D87A8',
+  ink: '#F2EFFA',
+  muted: '#8D87A8',
+  hi: '#A24BFF',
+  mid: '#8B30F4',
+  lo: '#5F27A8',
+  alarm: '#F45B96',
+  warn: '#A24BFF',
+  good: '#35D07F',
+  track: '#2A2657',
+  line: 'rgba(141,135,168,.14)',
+  cardTop: '#1A1A2C',
+  cardEnd: '#131320',
+  glow: '#361F5E',
+  ctx: '#A24BFF',
+  cold: '#2ED3E8',
+  status: { running: '#35D07F', waiting: '#A24BFF', attention: '#F45B96', stopped: '#8D87A8' },
+  models: [['opus', '#A24BFF'], ['sonnet', '#2ED3E8'], ['haiku', '#35D07F'], ['fable', '#F45B96']],
 }
 
-const LOOKS = [COLOR, GOLD, BLUE]
+const LOOKS = [COLOR, GOLD, VIOLET]
 
 const STATUS: Record<Row['status'], { label: string; en: string }> = {
   running: { label: 'работает', en: 'running' },
@@ -252,8 +254,10 @@ const styleOf = (c: Look) =>
 let C: Look = GOLD
 let STYLE = styleOf(GOLD)
 
+// До 0.9 третьим оформлением был Синий: кто его выбрал, получает Фиолет
 function useLook(id: StyleId) {
-  C = LOOKS.find(look => look.id === id) ?? GOLD
+  const wanted: string = id === ('blue' as string) ? 'violet' : id
+  C = LOOKS.find(look => look.id === wanted) ?? GOLD
   STYLE = styleOf(C)
 }
 
@@ -439,7 +443,10 @@ function forecastSvg(s: Snapshot | null, lim: Limits | null, now: number, tz: nu
     `<circle cx="${x(nowMin).toFixed(1)}" cy="${y(pct).toFixed(1)}" r="3.6" fill="${paint(pct, C.hi)}"/>` +
     proj +
     `<text x="${x0}" y="${yBot + 16}" class="m">${clock(s.winStart, tz)}</text>` +
-    `<text x="${x(nowMin).toFixed(1)}" y="${yBot + 16}" text-anchor="middle" class="m">${t('сейчас', 'now')}</text>` +
+    // У краёв «сейчас» наехало бы на время начала или сброса; момент и так видно по пунктиру
+    (x(nowMin) - x0 > 56 && x1 - x(nowMin) > 56
+      ? `<text x="${x(nowMin).toFixed(1)}" y="${yBot + 16}" text-anchor="middle" class="m">${t('сейчас', 'now')}</text>`
+      : '') +
     `<text x="${x1}" y="${yBot + 16}" text-anchor="end" class="m">${clock(resets, tz)}</text>`
   return { source: svg(114, body), alt: t(`Пятичасовое окно: ${Math.round(pct)}%, ${note}`, `5-hour window: ${Math.round(pct)}%, ${note}`) }
 }
