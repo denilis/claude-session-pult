@@ -136,6 +136,9 @@ test('оформление меняется кнопками сверху, за�
   expect(await chip('Статус')).toContain('stroke="#D4AF6A" stroke-width="1"')
   expect(await chip('Статус')).toContain('font-size:11.5px')
   expect(await chip('Золото')).toContain('11.5px;font-weight:600')
+  // На тёмном фоне выбранная кнопка закрашена плотно, иначе её не отличить
+  expect(await chip('Золото')).toContain('fill="#D4AF6A" fill-opacity=".45"')
+  expect(await chip('RU')).toContain('fill-opacity=".45"')
   expect(await chip('Кость')).not.toContain('11.5px;font-weight:600')
   for (const key of ['style-ivory', 'style-gold', 'lang-ru', 'compact', 'status', 'open-0b67965a', 'refresh']) {
     expect((await ui.find({ key }))?.props.plain).toBe(true)

@@ -543,7 +543,8 @@ function sessionRowSvg(r: Row) {
 // Кнопка-картинка: шрифт как у названия страны, рамка в один пиксель, выбранная заметнее
 function chipSvg(c: Chip, text: string, isMain: boolean, mark?: string) {
   const accent = C.flat ? C.ctx : C.mid
-  const fill = isMain ? `fill="${accent}" fill-opacity=".16"` : C.flat ? 'fill="none"' : 'fill="url(#card)"'
+  // На тёмном фоне (solid) слабая заливка не видна, выбранную кнопку закрашиваем плотнее
+  const fill = isMain ? `fill="${accent}" fill-opacity="${C.solid ? '.45' : '.16'}"` : C.flat ? 'fill="none"' : 'fill="url(#card)"'
   const edge = C.flat && !isMain ? 'class="grid"' : `stroke="${accent}"`
   const body =
     `<rect x=".5" y=".5" width="${c.w - 1}" height="${c.h - 1}" rx="7" ${fill} ${edge} stroke-width="1" vector-effect="non-scaling-stroke"/>` +
