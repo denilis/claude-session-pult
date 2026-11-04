@@ -266,19 +266,50 @@ function useLook(id: StyleId) {
   STYLE = styleOf(C)
 }
 
-// Ширина карточки и её содержимого
-const OUT_W = 320
+// Ширина, под которую нарисованы карточки узкой панели, и отступы внутри карточки
+const BASE_W = 320
 const PAD_X = 12
 const PAD_Y = 10
-const W = OUT_W - PAD_X * 2
+// Ширина карточки и её содержимого. Картинку рисуем под ту ширину, что она займёт, иначе приложение растягивает её
+// вместе со шрифтом. Как и оформление, задаётся перед рисованием каждого блока
+let OUT_W = BASE_W
+let W = OUT_W - PAD_X * 2
+
+function useWidth(w: number) {
+  OUT_W = Math.round(w)
+  W = OUT_W - PAD_X * 2
+}
+
+// Ширину панели приложение сообщает в ячейках моноширинного шрифта (bodyColumns); столько точек в ячейке на desktop.
+// Замерено 04.11.2026: 131 ячейка, содержимое 972 точки плюс отступ фона 16
+const CELL_PX = 7.54
+// Отступ фона панели по краям, точек
+const PAGE_PAD = 16
+// Уже этой ширины всё как в узкой панели: приложение лишь слегка ужимает или растягивает картинки
+const GROW_FROM = 360
+// С какой ширины панели блоки встают в две и в три колонки, и не уже какой колонка
+const TWO_COLS = 600
+const THREE_COLS = 950
+const MIN_COL = 280
+const COL_GAP = 8
 // Кнопки-картинки: w и h в точках, width их доля в ряду
 type Chip = { w: number; h: number; width: string }
 const STYLE_CHIP: Chip = { w: 62, h: 26, width: '20%' }
 const LANG_CHIP: Chip = { w: 36, h: 26, width: '12%' }
 const ACT_CHIP: Chip = { w: 108, h: 30, width: '48%' }
+// Четыре кнопки в один ряд в широкой панели
+const BAND_CHIP: Chip = { w: 108, h: 30, width: '24%' }
 const LOW_CHIP: Chip = { w: 86, h: 26, width: '27%' }
 const TOOL_CHIP: Chip = { w: 36, h: 24, width: '12%' }
 const OPEN_CHIP: Chip = { w: 100, h: 26, width: '31%' }
+
+// Кнопка в широкой панели, в ряду шириной rowW точек: картинка во столько точек, сколько кнопка займёт
+// (не больше most), чтобы подпись не раздувалась вместе с ней. В узкой панели кнопки как задано выше
+function fit(c: Chip, rowW: number, most: number): Chip {
+  // Приложение принимает только целый процент; картинку подгоняем под него
+  const pct = Math.max(1, Math.floor(Math.min(parseFloat(c.width), (most / rowW) * 100)))
+  return { w: Math.round((rowW * pct) / 100), h: c.h, width: `${pct}%` }
+}
 // Кнопка размером с подпись, поэтому прозрачная подпись длиннее любой картинки. Лишнее приложение режет многоточием,
 // поэтому кнопка заходит за край картинки: многоточие остаётся за обрезанным краем
 const BLANK = '\u00a0'.repeat(130)
@@ -364,25 +395,34 @@ function ring(cx: number, pct: number, stroke: string, value: string, label: str
   )
 }
 
-function gaugesSvg(lim: Limits | null, tz: number) {
+// Кольца лимитов; в широкой панели четвёртой шкалой скорость интернета (withNet)
+function gaugesSvg(lim: Limits | null, tz: number, withNet = false, n: Net | null = null) {
   const five = lim?.rateLimits.find(r => r.kind === 'five_hour')
   const week = lim?.rateLimits.find(r => r.kind === 'seven_day')
   const ctx = lim?.context
+  // Кольца по ширине карточки, но не дальше 170 точек друг от друга: в широкой полосе они собраны к центру
+  const count = withNet ? 4 : 3
+  const span = Math.min(W - 96, (count - 1) * 170)
+  const at = (i: number) => Math.round(48 + (W - 96 - span) / 2 + (i * span) / (count - 1))
+  const speed = netInfo(n)
   const body =
     (five
-      ? ring(48, five.percentUsed, paint(five.percentUsed, 'url(#ring)'), `${Math.round(five.percentUsed)}%`, t('5 часов', '5 hours'),
+      ? ring(at(0), five.percentUsed, paint(five.percentUsed, 'url(#ring)'), `${Math.round(five.percentUsed)}%`, t('5 часов', '5 hours'),
           five.resetsAt ? t(`сброс ${clock(Date.parse(five.resetsAt), tz)}`, `resets ${clock(Date.parse(five.resetsAt), tz)}`) : '')
-      : ring(48, 0, C.muted, '—', t('5 часов', '5 hours'), t('после ответа', 'after a reply'))) +
+      : ring(at(0), 0, C.muted, '—', t('5 часов', '5 hours'), t('после ответа', 'after a reply'))) +
     (week
-      ? ring(148, week.percentUsed, paint(week.percentUsed, 'url(#ring)'), `${Math.round(week.percentUsed)}%`, t('Неделя', 'Week'),
+      ? ring(at(1), week.percentUsed, paint(week.percentUsed, 'url(#ring)'), `${Math.round(week.percentUsed)}%`, t('Неделя', 'Week'),
           week.resetsAt ? t(`сброс ${dayClock(Date.parse(week.resetsAt), tz)}`, `resets ${dayClock(Date.parse(week.resetsAt), tz)}`) : '')
-      : ring(148, 0, C.muted, '—', t('Неделя', 'Week'), '')) +
+      : ring(at(1), 0, C.muted, '—', t('Неделя', 'Week'), '')) +
     (ctx?.tokens !== undefined
-      ? ring(248, ctx.percent ?? 0, ctxPaint(ctx.tokens), `${ctx.percent ?? 0}%`, t('Контекст', 'Context'), thousands(ctx.tokens))
-      : ring(248, 0, C.muted, '—', t('Контекст', 'Context'), ''))
+      ? ring(at(2), ctx.percent ?? 0, ctxPaint(ctx.tokens), `${ctx.percent ?? 0}%`, t('Контекст', 'Context'), thousands(ctx.tokens))
+      : ring(at(2), 0, C.muted, '—', t('Контекст', 'Context'), '')) +
+    (withNet ? ring(at(3), speed.pos * 100, speed.stroke, speed.mbit === null ? '—' : String(Math.round(speed.mbit)), speed.name, t('Мбит/с', 'Mbit/s')) : '')
   const fivePct = five ? Math.round(five.percentUsed) : '?'
   const weekPct = week ? Math.round(week.percentUsed) : '?'
-  const alt = t(`Лимит 5 часов ${fivePct}%, неделя ${weekPct}%, контекст ${ctx?.percent ?? '?'}%`, `5-hour limit ${fivePct}%, week ${weekPct}%, context ${ctx?.percent ?? '?'}%`)
+  const alt =
+    t(`Лимит 5 часов ${fivePct}%, неделя ${weekPct}%, контекст ${ctx?.percent ?? '?'}%`, `5-hour limit ${fivePct}%, week ${weekPct}%, context ${ctx?.percent ?? '?'}%`) +
+    (withNet ? `; ${speed.alt}` : '')
   return { source: svg(114, body, 'glow'), alt }
 }
 
@@ -469,14 +509,15 @@ function sessionsHeadSvg(s: Snapshot) {
       slot(40, C.status.running, String(run)) +
       slot(80, C.status.waiting, String(wait)) +
       slot(120, C.status.stopped, String(stop)) +
-      `<rect x="212" y="4" width="84" height="15" rx="7.5" fill="${C.ctx}" fill-opacity=".15"/>` +
-      `<text x="254" y="15" text-anchor="middle" class="t" style="fill:${C.ctx}">${t(`агентов ${s.agents}`, `agents ${s.agents}`)}</text>` +
+      `<rect x="${W - 84}" y="4" width="84" height="15" rx="7.5" fill="${C.ctx}" fill-opacity=".15"/>` +
+      `<text x="${W - 42}" y="15" text-anchor="middle" class="t" style="fill:${C.ctx}">${t(`агентов ${s.agents}`, `agents ${s.agents}`)}</text>` +
       (rows.length ? '' : `<text x="0" y="40" class="m">${t('сегодня сессий не было', 'no sessions today')}</text>`)
     return { source: svg(rows.length ? 24 : 46, body), alt }
   }
+  // Места счётчиков заданы для узкой карточки (W 296) и растягиваются вместе с ней
   const stat = (x: number, value: number, label: string, color: string) =>
-    `<text x="${x}" y="20" text-anchor="middle" class="b" style="fill:${color}">${value}</text>` +
-    `<text x="${x}" y="35" text-anchor="middle" class="h" style="font-size:9px;letter-spacing:.06em">${label}</text>`
+    `<text x="${Math.round((x * W) / 296)}" y="20" text-anchor="middle" class="b" style="fill:${color}">${value}</text>` +
+    `<text x="${Math.round((x * W) / 296)}" y="35" text-anchor="middle" class="h" style="font-size:9px;letter-spacing:.06em">${label}</text>`
   let body =
     stat(28, need, t('ВНИМАНИЕ', 'ATTENTION'), C.status.attention) +
     stat(92, run, t('РАБОТАЮТ', 'RUNNING'), C.status.running) +
@@ -525,7 +566,8 @@ function sessionRowSvg(r: Row) {
   const body =
     `<title>${esc(r.title)} · ${esc(r.project)} · ${label} ${since} · ${t('контекст', 'context')} ${thousands(r.ctx)}</title>` +
     back +
-    `<text x="14" y="18" class="n">${cut(r.title, !r.link ? 27 : C.flat ? 33 : 38)}</text>` +
+    // В широкой строке название длиннее: примерно знак на 7 точек
+    `<text x="14" y="18" class="n">${cut(r.title, (!r.link ? 27 : C.flat ? 33 : 38) + Math.max(0, Math.floor((rowW - BASE_W) / 7)))}</text>` +
     chip +
     `<rect x="14" y="28" width="${barW}" height="${barH}" rx="${barH / 2}" class="trf"/>` +
     (fill > 0 ? `<rect x="14" y="28" width="${Math.max(4, fill).toFixed(1)}" height="${barH}" rx="${barH / 2}" fill="${isHeavy ? C.alarm : C.flat ? C.ctx : 'url(#fillh)'}"/>` : '') +
@@ -552,12 +594,13 @@ function chipSvg(c: Chip, text: string, isMain: boolean, mark?: string) {
   return { source: doc(c.w, c.h, body), alt: text }
 }
 
-// Значок кнопки настройки: четыре блока
-const BLOCKS_MARK = [[12, 7], [19, 7], [12, 14], [19, 14]].map(([x, y]) => `<rect x="${x}" y="${y}" width="5" height="5" rx="1.2" class="t"/>`).join('')
+// Значок кнопки настройки: четыре блока по центру кнопки шириной w
+const blocksMark = (w: number) =>
+  [[12, 7], [19, 7], [12, 14], [19, 14]].map(([x, y]) => `<rect x="${(x ?? 0) + (w - 36) / 2}" y="${y}" width="5" height="5" rx="1.2" class="t"/>`).join('')
 
-// Название блока в режиме настройки
-function blockLabelSvg(text: string) {
-  return { source: doc(120, 24, `<text x="2" y="16" class="h">${esc(cap(text))}</text>`), alt: text }
+// Название блока в режиме настройки; w под ширину, что оно займёт
+function blockLabelSvg(text: string, w = 120) {
+  return { source: doc(w, 24, `<text x="2" y="16" class="h">${esc(cap(text))}</text>`), alt: text }
 }
 
 function weekSvg(s: Snapshot, lim: Limits | null, now: number, tz: number) {
@@ -672,14 +715,16 @@ function spendSvg(s: Snapshot) {
     }
   }
   const maxPct = Math.max(1, ...s.top.map(t => t.pct))
+  // Полоса лидера у правого края, название занимает всё место слева от неё
+  const barX = W - 146
   let leaders = ''
   s.top.forEach((t, i) => {
     const y0 = 62 + i * 20
     const w = (t.pct / maxPct) * 104
     leaders +=
-      `<text x="0" y="${y0 + 9}" class="l">${cut(t.title, 22)}</text>` +
-      `<rect x="150" y="${y0 + 3}" width="104" height="5" rx="2.5" class="trf"/>` +
-      `<rect x="150" y="${y0 + 3}" width="${Math.max(3, w).toFixed(1)}" height="5" rx="2.5" fill="${paint(Math.min(100, t.pct * 1.5), 'url(#fillh)')}"/>` +
+      `<text x="0" y="${y0 + 9}" class="l">${cut(t.title, 22 + Math.max(0, Math.floor((barX - 150) / 7)))}</text>` +
+      `<rect x="${barX}" y="${y0 + 3}" width="104" height="5" rx="2.5" class="trf"/>` +
+      `<rect x="${barX}" y="${y0 + 3}" width="${Math.max(3, w).toFixed(1)}" height="5" rx="2.5" fill="${paint(Math.min(100, t.pct * 1.5), 'url(#fillh)')}"/>` +
       `<text x="${W}" y="${y0 + 10}" text-anchor="end" class="t" style="fill:${C.flat ? C.ctx : C.hi}">${num(t.pct, 0)}%</text>`
   })
   const body =
@@ -695,16 +740,23 @@ function spendSvg(s: Snapshot) {
 const NET_W = 92
 const NET_H = 74
 
+// Скорость для квадрата и для шкалы в полосе лимитов: подпись, доля шкалы, краска и описание
+function netInfo(n: Net | null) {
+  const mbit = n?.mbit ?? null
+  const name = n ? (mbit === null ? t('нет сети', 'offline') : t('Интернет', 'Internet')) : t('замеряю', 'measuring')
+  const pos = mbit === null ? 0 : clamp(Math.log10(Math.max(mbit, 1)) / 3, 0, 1)
+  const stroke = mbit !== null && mbit < 5 ? C.alarm : !C.flat ? 'url(#ring)' : mbit !== null && mbit < 25 ? C.warn : C.good
+  const alt = `${name}, ${mbit === null ? t('скорость не измерена', 'speed not measured') : `${Math.round(mbit)} ${t('Мбит/с', 'Mbit/s')}`}`
+  return { mbit, name, pos, stroke, alt }
+}
+
 function netSvg(n: Net | null) {
   const cx = NET_W / 2
   const cy = 60
   const r = 21
   const len = Math.PI * r
-  const mbit = n?.mbit ?? null
-  const name = n ? (mbit === null ? t('нет сети', 'offline') : t('Интернет', 'Internet')) : t('замеряю', 'measuring')
-  const pos = mbit === null ? 0 : clamp(Math.log10(Math.max(mbit, 1)) / 3, 0, 1)
+  const { mbit, name, pos, stroke, alt } = netInfo(n)
   const arc = `M${cx - r},${cy} A${r},${r} 0 0 1 ${cx + r},${cy}`
-  const stroke = mbit !== null && mbit < 5 ? C.alarm : !C.flat ? 'url(#ring)' : mbit !== null && mbit < 25 ? C.warn : C.good
   const size = name.length > 11 ? 10 : name.length > 8 ? 11 : 12.5
   const body =
     `<rect x=".5" y=".5" width="${NET_W - 1}" height="${NET_H - 1}" rx="12" fill="${C.flat ? 'none' : 'url(#card)'}" stroke="${C.line}"/>` +
@@ -716,7 +768,6 @@ function netSvg(n: Net | null) {
       : '') +
     `<text x="${cx}" y="${cy - 1}" text-anchor="middle" class="b" style="font-size:14px">${mbit === null ? '—' : Math.round(mbit)}</text>` +
     `<text x="${cx}" y="${cy + 10}" text-anchor="middle" class="m" style="font-size:9px">${t('Мбит/с', 'Mbit/s')}</text>`
-  const alt = `${name}, ${mbit === null ? t('скорость не измерена', 'speed not measured') : `${Math.round(mbit)} ${t('Мбит/с', 'Mbit/s')}`}`
   return { source: doc(NET_W, NET_H, body), alt }
 }
 
@@ -1216,6 +1267,20 @@ export const register: Register = on => {
     }
     // Картинки сжимаются вместе с панелью, а обычным кнопкам нужен перенос
     const rowFit = isDrawn ? {} : { flexWrap: 'wrap' as const, gap: 'xs' as const }
+    // Ширина панели в точках: по ней число колонок и ширина, под которую рисуются картинки.
+    // Ячейка замерена на desktop; в остальных приложениях одна колонка, как раньше
+    const roomW = isDrawn ? Math.round((e.props.bodyColumns || 0) * CELL_PX) - (C.page ? PAGE_PAD : 0) : 0
+    const cols = roomW >= THREE_COLS ? 3 : roomW >= TWO_COLS ? 2 : 1
+    const paneW = roomW >= GROW_FROM ? roomW : BASE_W
+    const colW = cols === 1 ? paneW : Math.max(MIN_COL, Math.floor((roomW - COL_GAP * (cols - 1)) / cols))
+    const isWide = paneW > BASE_W
+    const size = (c: Chip, rowW: number, most: number) => (isWide ? fit(c, rowW, most) : c)
+    // В широком ряду кнопки прижаты к краям, между ними распорка
+    const spacer = isWide ? <Box flexGrow={1} /> : null
+    const wideGap = isWide ? { gap: 'xs' as const } : {}
+    const shownBlocks = view.order.filter(id => !view.closed.includes(id))
+    // В колонках Интернет встаёт четвёртой шкалой к лимитам, если они видны; иначе остаётся квадратом у кнопок
+    const netInBand = cols > 1 && shownBlocks.includes('gauges') && !view.folded.includes('gauges')
 
     const change = (fn: (l: Layout) => Layout) => () => void changeLayout($, fn)
     const toggleArranging = () => void update($, arranging, isOn => !isOn)
@@ -1224,39 +1289,67 @@ export const register: Register = on => {
 
       return b ? t(b.label, b.en) : id
     }
-    const content = (id: BlockId) => {
-      if (id === 'gauges') return draw(gaugesSvg(lim, tz))
-      if (id === 'forecast') return draw(forecastSvg(s, lim, now, tz))
-      if (id === 'actions') {
+    // Сжатие главным при тяжёлом контексте
+    const actionButtons = (chip: Chip) => [
+      btn(
+        'compact',
+        busyCompact
+          ? t('Сжимаю…', 'Compacting…')
+          : ctx
+            ? t(`Сжать · ${kilo(ctx)}`, `Compact · ${kilo(ctx)}`)
+            : t('Сжать', 'Compact'),
+        ctx >= HEAVY_CTX,
+        chip,
+        () => void compactNow($),
+      ),
+      btn('status', t('Статус', 'Status'), false, chip, () => void ask($, asks().status)),
+      btn('report', t('Итог', 'Report'), false, chip, () => void ask($, asks().report)),
+      btn('check', t('Проверка', 'Check'), false, chip, () => void ask($, asks().check)),
+    ]
+    const actions = (bw: number) => {
+      // В колонках четыре кнопки в один ряд во всю ширину; справа скорость, если её нет среди лимитов
+      if (cols > 1) {
+        const four = (
+          <Box flexDirection="row" justifyContent="space-between" width={netInBand ? '100%' : '78%'} {...rowFit}>
+            {actionButtons(fit(BAND_CHIP, netInBand ? bw : Math.round(bw * 0.78), 200))}
+          </Box>
+        )
+        if (netInBand) return four
+
         return (
-          // Сжатие главным при тяжёлом контексте, справа скорость
           <Box flexDirection="row" alignItems="flex-start" justifyContent="space-between" gap="xs">
-            <Box width="71%" flexShrink={1} flexDirection="column" gap="xs">
-              <Box flexDirection="row" justifyContent="space-between" {...rowFit}>
-                {btn(
-                  'compact',
-                  busyCompact
-                    ? t('Сжимаю…', 'Compacting…')
-                    : ctx
-                      ? t(`Сжать · ${kilo(ctx)}`, `Compact · ${kilo(ctx)}`)
-                      : t('Сжать', 'Compact'),
-                  ctx >= HEAVY_CTX,
-                  ACT_CHIP,
-                  () => void compactNow($),
-                )}
-                {btn('status', t('Статус', 'Status'), false, ACT_CHIP, () => void ask($, asks().status))}
-              </Box>
-              <Box flexDirection="row" justifyContent="space-between" {...rowFit}>
-                {btn('report', t('Итог', 'Report'), false, ACT_CHIP, () => void ask($, asks().report))}
-                {btn('check', t('Проверка', 'Check'), false, ACT_CHIP, () => void ask($, asks().check))}
-              </Box>
-            </Box>
-            <Box width="27%" flexShrink={0} flexDirection="row" justifyContent="flex-end">
+            {four}
+            <Box width="20%" flexShrink={0} flexDirection="row" justifyContent="flex-end">
               {draw(netSvg(netNow))}
             </Box>
           </Box>
         )
       }
+      const [compact, status, report, check] = actionButtons(size(ACT_CHIP, Math.round(bw * 0.71), 220))
+
+      return (
+        // Две пары кнопок, справа скорость
+        <Box flexDirection="row" alignItems="flex-start" justifyContent="space-between" gap="xs">
+          <Box width="71%" flexShrink={1} flexDirection="column" gap="xs">
+            <Box flexDirection="row" justifyContent="space-between" {...rowFit}>
+              {compact}
+              {status}
+            </Box>
+            <Box flexDirection="row" justifyContent="space-between" {...rowFit}>
+              {report}
+              {check}
+            </Box>
+          </Box>
+          <Box width="27%" flexShrink={0} flexDirection="row" justifyContent="flex-end">
+            {draw(netSvg(netNow))}
+          </Box>
+        </Box>
+      )
+    }
+    const content = (id: BlockId, bw: number) => {
+      if (id === 'gauges') return draw(gaugesSvg(lim, tz, netInBand, netNow))
+      if (id === 'forecast') return draw(forecastSvg(s, lim, now, tz))
+      if (id === 'actions') return actions(bw)
       if (!s) return null
       if (id === 'week') return draw(weekSvg(s, lim, now, tz))
       if (id === 'hours') return draw(hoursSvg(s, now, tz))
@@ -1270,22 +1363,29 @@ export const register: Register = on => {
       )
     }
     // Перетаскивания у панели нет: порядок меняют стрелки
-    const tools = (id: BlockId, isFolded: boolean) => (
-      <Box flexDirection="row" alignItems="center" justifyContent="space-between" {...rowFit}>
-        <Box width="40%">{draw(blockLabelSvg(blockName(id)))}</Box>
-        {btn(`block-up-${id}`, '▲', false, TOOL_CHIP, change(l => ({ ...l, order: moved(l, id, -1) })))}
-        {btn(`block-down-${id}`, '▼', false, TOOL_CHIP, change(l => ({ ...l, order: moved(l, id, 1) })))}
-        {btn(`block-fold-${id}`, isFolded ? '+' : '−', false, TOOL_CHIP, change(l => ({ ...l, folded: toggled(l.folded, id) })))}
-        {btn(`block-close-${id}`, '×', false, TOOL_CHIP, change(l => ({ ...l, closed: toggled(l.closed, id) })))}
-      </Box>
-    )
-    const block = (id: BlockId) => {
+    const tools = (id: BlockId, isFolded: boolean, bw: number) => {
+      const tool = size(TOOL_CHIP, bw, 44)
+
+      return (
+        <Box flexDirection="row" alignItems="center" justifyContent="space-between" {...rowFit} {...wideGap}>
+          <Box width="40%">{draw(blockLabelSvg(blockName(id), isWide ? Math.round(bw * 0.4) : 120))}</Box>
+          {spacer}
+          {btn(`block-up-${id}`, '▲', false, tool, change(l => ({ ...l, order: moved(l, id, -1) })))}
+          {btn(`block-down-${id}`, '▼', false, tool, change(l => ({ ...l, order: moved(l, id, 1) })))}
+          {btn(`block-fold-${id}`, isFolded ? '+' : '−', false, tool, change(l => ({ ...l, folded: toggled(l.folded, id) })))}
+          {btn(`block-close-${id}`, '×', false, tool, change(l => ({ ...l, closed: toggled(l.closed, id) })))}
+        </Box>
+      )
+    }
+    // Блок шириной bw точек: его картинки рисуются под эту ширину
+    const block = (id: BlockId, bw: number) => {
+      useWidth(bw)
       const isFolded = view.folded.includes(id)
-      const body = isFolded ? null : content(id)
+      const body = isFolded ? null : content(id, bw)
       if (isArranging) {
         return (
           <Box key={id} flexDirection="column" gap="xs">
-            {tools(id, isFolded)}
+            {tools(id, isFolded, bw)}
             {body}
           </Box>
         )
@@ -1303,20 +1403,67 @@ export const register: Register = on => {
         )
       )
     }
+    // Высота блока в точках, чтобы колонки вышли поровну. Картинка нарисована под ширину колонки, поэтому высота та же
+    const heightOf = (id: BlockId) => {
+      const head = isArranging ? 30 : 0
+      if (view.folded.includes(id)) return head + 26
+      if (id === 'gauges' || id === 'forecast') return head + 134
+      if (id === 'actions') return head + 70
+      if (!s) return head
+      if (id === 'week') return head + (s.week ? 134 : 54)
+      if (id === 'hours') return head + 120
+      if (id === 'spend') return head + 78 + s.top.length * 20
+
+      return head + 58 + s.sessions.reduce((sum, r) => sum + 50 + (r.note ? 20 : 0), 0)
+    }
+    // Блоки идут в порядке из настройки. В колонках лимиты и кнопки во всю ширину, а подряд идущие остальные
+    // раскладываются по колонкам: каждый следующий в ту, что сейчас короче
+    const parts: (BlockId | BlockId[])[] = []
+    for (const id of shownBlocks) {
+      const last = parts.at(-1)
+      if (cols === 1 || id === 'gauges' || id === 'actions') parts.push(id)
+      else if (Array.isArray(last)) last.push(id)
+      else parts.push([id])
+    }
+    const spread = (ids: BlockId[]) => {
+      const columns = Array.from({ length: cols }, () => ({ h: 0, ids: [] as BlockId[] }))
+      for (const id of ids) {
+        const low = columns.reduce((a, b) => (b.h < a.h ? b : a))
+        low.ids.push(id)
+        low.h += heightOf(id) + COL_GAP
+      }
+
+      return columns
+    }
+    const blocks = parts.map((part, i) =>
+      typeof part === 'string' ? (
+        block(part, paneW)
+      ) : (
+        <Box key={`cols-${i}`} flexDirection="row" alignItems="flex-start" gap={1}>
+          {spread(part).map((column, j) => (
+            <Box key={`col-${i}-${j}`} width={`${Math.floor(100 / cols)}%`} flexShrink={1} minWidth={0} flexDirection="column" gap={1}>
+              {column.ids.map(id => block(id, colW))}
+            </Box>
+          ))}
+        </Box>
+      ),
+    )
+    const langChip = size(LANG_CHIP, paneW, 44)
 
     return (
       <Box flexDirection="column" gap={1} {...backdrop}>
-        <Box flexDirection="row" justifyContent="space-between" {...rowFit}>
-          {LOOKS.map(look => btn(`style-${look.id}`, t(look.label, look.en), look.id === C.id, STYLE_CHIP, () => void chooseStyle($, look.id)))}
-          {(['ru', 'en'] as const).map(id => btn(`lang-${id}`, id.toUpperCase(), id === LANG, LANG_CHIP, () => void chooseLang($, id)))}
-          {btn('arrange', t('Блоки', 'Blocks'), isArranging, LANG_CHIP, toggleArranging, BLOCKS_MARK)}
+        <Box flexDirection="row" justifyContent="space-between" {...rowFit} {...wideGap}>
+          {LOOKS.map(look => btn(`style-${look.id}`, t(look.label, look.en), look.id === C.id, size(STYLE_CHIP, paneW, 96), () => void chooseStyle($, look.id)))}
+          {spacer}
+          {(['ru', 'en'] as const).map(id => btn(`lang-${id}`, id.toUpperCase(), id === LANG, langChip, () => void chooseLang($, id)))}
+          {btn('arrange', t('Блоки', 'Blocks'), isArranging, langChip, toggleArranging, blocksMark(langChip.w))}
         </Box>
-        {view.order.filter(id => !view.closed.includes(id)).map(id => block(id))}
+        {blocks}
         {isArranging && (
           <Box flexDirection="row" flexWrap="wrap" gap="xs">
-            {view.closed.map(id => btn(`block-open-${id}`, `+ ${blockName(id)}`, false, OPEN_CHIP, change(l => ({ ...l, closed: toggled(l.closed, id) }))))}
-            {btn('layout-reset', t('Как было', 'Reset'), false, OPEN_CHIP, change(() => FIRST_LAYOUT))}
-            {btn('arrange-done', t('Готово', 'Done'), true, OPEN_CHIP, toggleArranging)}
+            {view.closed.map(id => btn(`block-open-${id}`, `+ ${blockName(id)}`, false, size(OPEN_CHIP, paneW, 150), change(l => ({ ...l, closed: toggled(l.closed, id) }))))}
+            {btn('layout-reset', t('Как было', 'Reset'), false, size(OPEN_CHIP, paneW, 150), change(() => FIRST_LAYOUT))}
+            {btn('arrange-done', t('Готово', 'Done'), true, size(OPEN_CHIP, paneW, 150), toggleArranging)}
           </Box>
         )}
         {!s && <Text {...noteColor}>{t('Собираю данные…', 'Collecting data…')}</Text>}
@@ -1327,7 +1474,7 @@ export const register: Register = on => {
               ? t(`Обновлено ${clock(s.at, tz)} · 1% лимита ≈ ${thousands(s.cal)} ед.`, `Updated ${clock(s.at, tz)} · 1% of the limit ≈ ${thousands(s.cal)} units`)
               : t('Первое обновление…', 'First update…')}
           </Text>
-          {btn('refresh', t('Обновить', 'Refresh'), false, LOW_CHIP, () => void refresh($, true))}
+          {btn('refresh', t('Обновить', 'Refresh'), false, size(LOW_CHIP, paneW, 130), () => void refresh($, true))}
         </Box>
       </Box>
     )

@@ -726,3 +726,141 @@ test('без Python пульт подсказывает, что поставит
   expect(await shown(ui)).toContain('Сжать · 356K')
   await ui.unmount()
 })
+
+// Широкая панель: ширину приложение сообщает в ячейках, в точках это bodyColumns × 7,54 минус отступ фона 16
+const wide = (bodyColumns: number) => ({ ...PANE, props: { ...PANE.props, bodyColumns } })
+// Ключи блоков в колонке, по порядку сверху вниз
+const blocksIn = async (ui: { find: (q: { key: string }) => Promise<unknown> }, key: string) => {
+  const el = (await ui.find({ key })) as { children?: { props?: { key?: string } }[] } | undefined
+  return el ? (el.children ?? []).map(c => String(c.props?.key ?? '')) : undefined
+}
+const answerNet = (_: unknown, e: unknown) => {
+  const argv = (e as { argv?: string[] }).argv ?? []
+  if (!argv.some(a => String(a).includes('netcheck'))) return answerSnapshot()
+  return { value: { exitCode: 0, stdout: JSON.stringify({ mbit: 127 }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+}
+const SQUARE = 'viewBox="0 0 92 74"'
+
+test('широкая панель: две колонки, Интернет в полосе лимитов, картинки под ширину колонки', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  mock.store(on)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.id', () => ({ value: 'test-session' }))
+  on('session.usage', () => ({ value: USAGE }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('process.run', answerNet)
+  await $.command.run({ command: 'pult', args: '' } as never)
+
+  // 90 ячеек: 663 точки, две колонки по 327
+  const ui = await $.ui.mount({ ...wide(90), surface: 'desktop' })
+  const all = await sources(ui)
+  const gauges = all.find(c => c.alt.startsWith('Лимит 5 часов'))
+  expect(gauges?.alt).toBe('Лимит 5 часов 17%, неделя 72%, контекст 36%; Интернет, 127 Мбит/с')
+  expect(gauges?.source).toContain('viewBox="0 0 663 134"')
+  expect(gauges?.source).toContain('>ИНТЕРНЕТ</text>')
+  expect(gauges?.source).toContain('>127</text>')
+  // Квадрата у кнопок нет: скорость уже в полосе лимитов
+  expect(all.some(c => c.source.includes(SQUARE))).toBe(false)
+  // Четыре кнопки в ряд; картинка шириной с саму кнопку, поэтому подпись не раздувается
+  const chipOf = (alt: string) => all.find(c => c.alt === alt)?.source ?? ''
+  for (const alt of ['Сжать · 356K', 'Статус', 'Итог', 'Проверка']) expect(chipOf(alt)).toContain('viewBox="0 0 159 30"')
+  expect(chipOf('Золото')).toContain('viewBox="0 0 93 26"')
+  expect(chipOf('RU')).toContain('viewBox="0 0 40 26"')
+  expect(chipOf('Обновить')).toContain('viewBox="0 0 126 26"')
+  // Лимиты и кнопки во всю ширину, остальное по порядку в более короткую колонку
+  expect(await blocksIn(ui, 'col-2-0')).toEqual(['forecast', 'sessions'])
+  expect(await blocksIn(ui, 'col-2-1')).toEqual(['week', 'hours', 'spend'])
+  const row = all.find(c => c.alt.startsWith('Тестовый кейс'))
+  expect(row?.source).toContain('viewBox="0 0 327 44"')
+  expect(all.find(c => c.alt.startsWith('Пятичасовое окно'))?.source).toContain('viewBox="0 0 327 134"')
+  // Строка сессии по-прежнему открывает сессию
+  expect(await ui.find({ key: 'open-0b67965a' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('очень широкая панель: три колонки', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  mock.store(on)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.id', () => ({ value: 'test-session' }))
+  on('session.usage', () => ({ value: USAGE }))
+  on('process.run', answerNet)
+  await $.command.run({ command: 'pult', args: '' } as never)
+
+  // 140 ячеек: 1040 точек, три колонки по 341
+  const ui = await $.ui.mount({ ...wide(140), surface: 'desktop' })
+  expect(await blocksIn(ui, 'col-2-0')).toEqual(['forecast', 'hours'])
+  expect(await blocksIn(ui, 'col-2-1')).toEqual(['week', 'spend'])
+  expect(await blocksIn(ui, 'col-2-2')).toEqual(['sessions'])
+  expect((await sources(ui)).find(c => c.alt.startsWith('Недельное окно'))?.source).toContain('viewBox="0 0 341 134"')
+  await ui.unmount()
+})
+
+test('широкая панель держит порядок из настройки, без лимитов скорость остаётся квадратом', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  mock.store(on, { layout: { order: ['actions', 'sessions', 'forecast', 'week', 'hours', 'spend', 'gauges'], folded: [], closed: [] } })
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.id', () => ({ value: 'test-session' }))
+  on('session.usage', () => ({ value: USAGE }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('process.run', answerNet)
+  await $.command.run({ command: 'pult', args: '' } as never)
+
+  const ui = await $.ui.mount({ ...wide(90), surface: 'desktop' })
+  // Кнопки первые, лимиты последние, между ними колонки
+  expect(await blocksIn(ui, 'col-1-0')).toEqual(['sessions', 'hours'])
+  expect(await blocksIn(ui, 'col-1-1')).toEqual(['forecast', 'week', 'spend'])
+  const all = await charts(ui)
+  expect(all.at(-1)?.alt).toContain('Интернет, 127 Мбит/с')
+  expect((await sources(ui)).some(c => c.source.includes(SQUARE))).toBe(false)
+
+  // Лимиты закрыты: скорость возвращается квадратом справа от кнопок, кнопки ужимаются
+  await ui.press({ key: 'arrange' })
+  await ui.press({ key: 'block-close-gauges' })
+  await ui.press({ key: 'arrange-done' })
+  const after = await sources(ui)
+  expect(after.some(c => c.source.includes(SQUARE))).toBe(true)
+  expect(after.find(c => c.alt === 'Статус')?.source).toContain('viewBox="0 0 124 30"')
+  // Свёрнутые лимиты тоже отдают скорость квадрату
+  await ui.press({ key: 'arrange' })
+  await ui.press({ key: 'block-open-gauges' })
+  await ui.press({ key: 'block-fold-gauges' })
+  await ui.press({ key: 'arrange-done' })
+  expect((await sources(ui)).some(c => c.source.includes(SQUARE))).toBe(true)
+  await ui.unmount()
+})
+
+test('средняя ширина: одна колонка, картинки под ширину; узкая панель, терминал и VS Code как раньше', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  mock.store(on)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.id', () => ({ value: 'test-session' }))
+  on('session.usage', () => ({ value: USAGE }))
+  on('process.run', answerNet)
+  await $.command.run({ command: 'pult', args: '' } as never)
+
+  // 60 ячеек: 436 точек, одна колонка, но карточки нарисованы под 436, а не растянуты из 320
+  const mid = await $.ui.mount({ ...wide(60), surface: 'desktop' })
+  const all = await sources(mid)
+  expect(all.find(c => c.alt.startsWith('Лимит 5 часов'))?.source).toContain('viewBox="0 0 436 134"')
+  expect(all.find(c => c.alt.startsWith('Лимит 5 часов'))?.alt).not.toContain('Интернет')
+  expect(all.some(c => c.source.includes(SQUARE))).toBe(true)
+  expect(await mid.find({ key: 'cols-2' })).toBeUndefined()
+  await mid.unmount()
+
+  // Узкая панель как раньше: карточки 320, кнопки прежнего размера
+  const narrow = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const thin = await sources(narrow)
+  expect(thin.find(c => c.alt.startsWith('Лимит 5 часов'))?.source).toContain('viewBox="0 0 320 134"')
+  expect(thin.find(c => c.alt === 'Статус')?.source).toContain('viewBox="0 0 108 30"')
+  expect(thin.find(c => c.alt === 'Золото')?.source).toContain('viewBox="0 0 62 26"')
+  await narrow.unmount()
+
+  // Ширина ячейки замерена только на desktop: в терминале и VS Code колонок нет даже в широкой панели
+  for (const surface of ['terminal', 'vscode'] as const) {
+    const other = await $.ui.mount({ ...wide(140), surface })
+    expect(await other.find({ key: 'cols-2' })).toBeUndefined()
+    expect((await other.findAll({ type: 'Button' })).length).toBeGreaterThan(0)
+    await other.unmount()
+  }
+})
