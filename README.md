@@ -9,6 +9,8 @@ A control panel that sits next to your Claude chat. It shows how much of your 5-
 
 I built it for myself once I had more than five sessions running in parallel and my limit kept running out before the reset. "Pult" is Russian for a control panel.
 
+![Session Pult in the Claude desktop app: wide layout, Gold theme](docs/panel-wide-gold.png)
+
 ## Install
 
 Open Claude Code in a terminal and run:
@@ -19,7 +21,7 @@ Open Claude Code in a terminal and run:
 
 Answer `y` when asked about the new marketplace, then choose **Install for you** (user scope), so the panel also shows up in the Claude desktop app. Start a new session and the panel appears on the right. If it doesn't, type `/pult`.
 
-The panel starts in Russian. Press **EN** in the top row; the choice is saved for all sessions. Switch before using Compact or the prompt buttons: they send their instructions in the panel language, and the compaction summary is written in it.
+The panel follows your system language: Russian on a Russian system, English everywhere else. Press **RU** or **EN** in the top row to choose for yourself; that choice is saved for all sessions. Compact and the prompt buttons send their instructions in the panel language, and the compaction summary is written in it.
 
 ## Requirements
 
@@ -62,6 +64,13 @@ The row color shows the status. The colors below are for the default Gold theme;
 
 A session that waits for you shows what it is waiting for. Sessions with a context over 100K tokens whose cache goes cold in less than 15 minutes move to the top, with the cost of being late shown as a percentage of your limit.
 
+<p>
+  <img src="docs/panel-sessions-violet.png" alt="Session list in the Violet theme" width="300">
+  <img src="docs/panel-layout-ivory.png" alt="Rearranging blocks in the Ivory theme" width="300">
+</p>
+
+Left: the session list in the Violet theme. Right: rearranging blocks in the Ivory theme. Session titles are blurred.
+
 ## What it does on its own
 
 - **Warns before the cache goes cold.** On a Claude subscription the prompt cache lives for an hour: after an hour of silence, the next reply re-reads the whole context at full price. If the context is over 100K tokens, a bar with a Compact button appears above the prompt fifteen minutes before that.
@@ -71,7 +80,7 @@ A session that waits for you shows what it is waiting for. Sessions with a conte
 
 ## Data and privacy
 
-Everything is computed on your computer: the panel reads session logs in `~/.claude/projects` and the app's session files, and sends nothing anywhere. The only network access is the speed test, which downloads a test file from Cloudflare. It runs Python (session list, charts, speed test), PowerShell (Windows notifications) and rundll32 (opening sessions), and keeps a small cache in `~/.claude/cache/session-pult.json`.
+Everything is computed on your computer: the panel reads session logs in `~/.claude/projects` and the app's session files, and sends nothing anywhere. The only network access is the speed test, which downloads a test file from Cloudflare. It runs Python (session list, charts, speed test), PowerShell (Windows notifications and the system language), rundll32 (opening sessions) and, on macOS, `defaults` (the system language). It keeps a small cache in `~/.claude/cache/session-pult.json`.
 
 The panel spends tokens only when you ask it to: the Compact, Status, Report and Check buttons and `/new-sheet`.
 

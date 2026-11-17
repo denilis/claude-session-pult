@@ -844,6 +844,36 @@ async function checkNet($: EngineInterface, force: boolean) {
   }
 }
 
+// Язык системы, пока язык не выбран кнопкой: русский для русской системы, иначе английский.
+// Код языка вида ru, en-US, ru_RU.UTF-8; всё прочее (C, POSIX, чужой вывод) не решает ничего
+const langOf = (code: string | undefined): LangId | undefined => {
+  const found = /^([a-z]{2,3})(?:[-_.]|$)/i.exec((code ?? '').trim())?.[1]
+  return found ? (found.toLowerCase() === 'ru' ? 'ru' : 'en') : undefined
+}
+async function systemLang($: EngineInterface): Promise<LangId | undefined> {
+  // Windows: язык интерфейса системы, у приложения переменной LANG нет
+  if (await $.env.get('USERPROFILE').catch(() => undefined)) {
+    const command = '[System.Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName'
+    const r = await $.process.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-Command', command], { timeoutMs: 5_000 }).catch(() => undefined)
+    const found = r?.exitCode === 0 ? langOf(r.stdout) : undefined
+    if (found) return found
+  }
+  // Linux и терминал на Mac
+  const fromEnv =
+    langOf(await $.env.get('LC_ALL').catch(() => undefined)) ??
+    langOf(await $.env.get('LC_MESSAGES').catch(() => undefined)) ??
+    langOf(await $.env.get('LANG').catch(() => undefined))
+  if (fromEnv) return fromEnv
+  // Приложение на Mac: первый язык из настроек системы, вывод вида ( "en-US", ru ). Домашние папки Mac лежат в /Users
+  const home = await $.env.get('HOME').catch(() => undefined)
+  if (!home?.startsWith('/Users/')) return undefined
+  const r = await $.process.run(['defaults', 'read', '-g', 'AppleLanguages'], { timeoutMs: 5_000 }).catch(() => undefined)
+  const first = r?.exitCode === 0 ? /^\(\s*"?([A-Za-z]{2,3}(?:[-_][A-Za-z]+)*)"?\s*[,)]/.exec(r.stdout.trim())?.[1] : undefined
+  return langOf(first)
+}
+// Систему спрашиваем один раз за загрузку мода, а не при каждом обновлении
+let langChecked = false
+
 // Стиль, язык и блоки общие для всех сессий: открытые панели подхватывают их при обновлении
 async function loadPrefs($: EngineInterface) {
   const savedStyle = (await $.store.get('style').catch(() => undefined)) as StyleId | undefined
@@ -852,6 +882,13 @@ async function loadPrefs($: EngineInterface) {
   if (savedLang) {
     LANG = savedLang
     await update($, lang, () => savedLang)
+  } else if (!langChecked) {
+    // Выбор системы не сохраняем: сохраняется только нажатие RU или EN.
+    // Язык системы не узнали: английский, его поймет большинство
+    langChecked = true
+    const found = (await systemLang($)) ?? 'en'
+    LANG = found
+    await update($, lang, () => found)
   }
   const savedLayout = (await $.store.get('layout').catch(() => undefined)) as Layout | undefined
   if (savedLayout) await update($, layout, () => cleanLayout(savedLayout))

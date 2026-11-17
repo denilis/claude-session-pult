@@ -1,6 +1,6 @@
 {
   "name": "session-pult",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Session control panel: usage limits, context, forecasts, active sessions and agents in a side pane (EN/RU)",
   "author": { "name": "denilis", "url": "https://github.com/denilis" },
   "homepage": "https://github.com/denilis/claude-session-pult",

@@ -70,6 +70,7 @@ const charts = async (ui: Parameters<typeof sources>[0]) => (await sources(ui)).
 
 test('пульт рисует кольца, прогноз, сессии разным цветом и кнопку сжатия', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.id', () => ({ value: 'test-session' }))
   on('session.usage', () => ({ value: USAGE }))
@@ -119,6 +120,7 @@ test('пульт рисует кольца, прогноз, сессии раз�
 
 test('оформление меняется кнопками сверху, запоминается для всех сессий и не прячет кнопки', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   mock.store(on)
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.id', () => ({ value: 'test-session' }))
@@ -167,6 +169,7 @@ for (const [old, now, alarm] of [['blue', 'Фиолет', '#F45B96'], ['color', 
   test(`кто выбрал прежнее оформление ${old}, получает ${now}`, async ($, on) => {
     mock.clock(on, { now: NOW })
     mock.store(on, { style: old })
+    mock.env(on, { LANG: 'ru_RU.UTF-8' })
     on('ui.open', () => ({ value: { isPlaced: true } }))
     on('session.id', () => ({ value: 'test-session' }))
     on('session.usage', () => ({ value: USAGE }))
@@ -184,6 +187,7 @@ for (const [old, now, alarm] of [['blue', 'Фиолет', '#F45B96'], ['color', 
 
 test('выбор оформления общий для сессий: панель берёт его из хранилища и записывает новый', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   mock.store(on, { style: 'ivory' })
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.id', () => ({ value: 'test-session' }))
@@ -205,6 +209,7 @@ test('выбор оформления общий для сессий: панел
 
 test('блоки: порядок, сворачивание, закрытие и возврат, выбор общий для сессий', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   mock.store(on)
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.id', () => ({ value: 'test-session' }))
@@ -257,6 +262,7 @@ test('блоки: порядок, сворачивание, закрытие и 
 
 test('блоки: старое сохранённое значение не ломает панель', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   mock.store(on, { layout: { order: ['spend', 'старый блок'], folded: ['hours'], closed: ['week'] } })
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.id', () => ({ value: 'test-session' }))
@@ -276,6 +282,7 @@ test('блоки: старое сохранённое значение не ло
 
 test('квадрат: скорость, замер раз в полчаса на все сессии, кнопка Обновить мерит сразу', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   mock.store(on)
   let measured = 0
   let answer: Record<string, unknown> = { mbit: 75.6 }
@@ -319,6 +326,7 @@ test('квадрат: скорость, замер раз в полчаса на
 
 test('язык: переключатель рядом со стилями, панель и просьбы на английском, выбор общий для сессий', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   mock.store(on)
   const sent: string[] = []
   on('prompt.submit', (_, e) => {
@@ -359,8 +367,58 @@ test('язык: переключатель рядом со стилями, па�
   await ui.unmount()
 })
 
+test('язык по умолчанию как у системы, систему спрашивает один раз, нажатая кнопка сильнее системы', async ($, on) => {
+  mock.clock(on, { now: NOW })
+  mock.store(on)
+  mock.env(on, { USERPROFILE: 'C:\\Users\\test' })
+  let asked = 0
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.id', () => ({ value: 'test-session' }))
+  on('session.usage', () => ({ value: USAGE }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('process.run', (_, e) => {
+    const argv = (e as unknown as { argv: string[] }).argv ?? []
+    if (!argv.some(a => String(a).includes('CurrentUICulture'))) return answerSnapshot()
+    asked += 1
+    return { value: { exitCode: 0, stdout: 'en\r\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  await $.command.run({ command: 'pult', args: '' } as never)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(asked).toBe(1)
+  expect(await shown(ui)).toContain('Status')
+
+  // Обновление не спрашивает систему заново
+  await $.command.run({ command: 'pult', args: '' } as never)
+  expect(asked).toBe(1)
+
+  // Нажатие RU запоминается и после обновления остаётся, хотя система английская
+  await ui.press({ key: 'lang-ru' })
+  await $.command.run({ command: 'pult', args: '' } as never)
+  expect(await shown(ui)).toContain('Статус')
+  await ui.unmount()
+})
+
+for (const [code, word] of [['ru_RU.UTF-8', 'Статус'], ['en_US.UTF-8', 'Status'], ['C', 'Status']] as const) {
+  test(`язык системы LANG=${code}: на панели ${word}`, async ($, on) => {
+    mock.clock(on, { now: NOW })
+    mock.store(on)
+    mock.env(on, { LANG: code })
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('session.id', () => ({ value: 'test-session' }))
+    on('session.usage', () => ({ value: USAGE }))
+    on('ui.toast', () => ({ value: undefined }))
+    on('process.run', answerSnapshot)
+    await $.command.run({ command: 'pult', args: '' } as never)
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    expect(await shown(ui)).toContain(word)
+    await ui.unmount()
+  })
+}
+
 test('кнопка сжимает с инструкцией, а во время ответа ставит /compact в очередь', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   const toasts: string[] = []
   const asked: string[] = []
   const queued: string[] = []
@@ -398,6 +456,7 @@ test('кнопка сжимает с инструкцией, а во время 
 
 test('подпись Сжимаю не застревает, если сжатие оборвала перезагрузка мода', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   on('session.id', () => ({ value: 'test-session' }))
   on('session.usage', () => ({ value: USAGE }))
   on('process.run', () => ({
@@ -425,6 +484,7 @@ test('подпись Сжимаю не застревает, если сжати
 
 test('без данных панель не падает', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /Собираю данные/ }))?.text).toBe('Собираю данные…')
   expect((await charts(ui))[2]?.alt).toBe('Нет данных об окне')
@@ -437,6 +497,7 @@ const answerSnapshot = () => ({
 
 test('кнопка статуса открывает сессию по ссылке, а при сбое говорит об этом', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   const opened: string[][] = []
   const toasts: string[] = []
   let isBroken = false
@@ -499,6 +560,7 @@ const waitingRow = {
 
 test('сессия, что вот-вот остынет, показывает цену опоздания и выделена', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   on('session.id', () => ({ value: 'test-session' }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.usage', () => ({ value: USAGE }))
@@ -516,6 +578,7 @@ test('сессия, что вот-вот остынет, показывает ц
 
 test('уведомление о ждущей сессии: один раз, только при окне Claude впереди, нажатие открывает её', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   mock.store(on)
   const shells: string[] = []
   on('ui.toast', () => ({ value: undefined }))
@@ -555,6 +618,7 @@ test('уведомление о ждущей сессии: один раз, то
 
 test('прогноз недели: нет данных, темп ещё не ясен, и уведомление, что кончится до сброса', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   mock.store(on)
   const toasts: string[] = []
   on('ui.toast', (_, e) => {
@@ -593,6 +657,7 @@ test('прогноз недели: нет данных, темп ещё не я�
 
 test('кнопки Статус, Итог, Проверка и Новый лист отправляют промпты от имени пользователя', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   const sent: { text: string; asUser?: boolean }[] = []
   on('prompt.submit', (_, e) => {
     sent.push({ text: e.text, asUser: e.origin?.kind === 'plugin' ? e.origin.asUser : undefined })
@@ -627,6 +692,7 @@ test('кнопки Статус, Итог, Проверка и Новый лис
 
 test('полоса над вводом предупреждает, что кэш остыл, и сжимает', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   // Под плагинами движок рисует пустую полосу, когда плагину нечего показать
   on('ui.render', { component: 'AbovePrompt' }, (eng, e) => {
     const { Box } = eng.ui.resolve(e)
@@ -673,6 +739,7 @@ test('агент без своей модели идёт на Sonnet, с явн�
 
 test('уведомление о лимите приходит один раз на окно', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   mock.store(on)
   const toasts: string[] = []
   const shells: string[] = []
@@ -704,6 +771,7 @@ test('уведомление о лимите приходит один раз н
 
 test('без Python пульт подсказывает, что поставить, и не падает', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   const tried: string[] = []
   on('session.id', () => ({ value: 'test-session' }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
@@ -743,6 +811,7 @@ const SQUARE = 'viewBox="0 0 92 74"'
 
 test('широкая панель: две колонки, Интернет в полосе лимитов, картинки под ширину колонки', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   mock.store(on)
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.id', () => ({ value: 'test-session' }))
@@ -780,6 +849,7 @@ test('широкая панель: две колонки, Интернет в п
 
 test('очень широкая панель: три колонки', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   mock.store(on)
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.id', () => ({ value: 'test-session' }))
@@ -798,6 +868,7 @@ test('очень широкая панель: три колонки', async ($, 
 
 test('широкая панель держит порядок из настройки, без лимитов скорость остаётся квадратом', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   mock.store(on, { layout: { order: ['actions', 'sessions', 'forecast', 'week', 'hours', 'spend', 'gauges'], folded: [], closed: [] } })
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.id', () => ({ value: 'test-session' }))
@@ -832,6 +903,7 @@ test('широкая панель держит порядок из настро�
 
 test('средняя ширина: одна колонка, картинки под ширину; узкая панель, терминал и VS Code как раньше', async ($, on) => {
   mock.clock(on, { now: NOW })
+  mock.env(on, { LANG: 'ru_RU.UTF-8' })
   mock.store(on)
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.id', () => ({ value: 'test-session' }))
