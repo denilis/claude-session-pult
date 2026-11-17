@@ -1,6 +1,11 @@
 {
   "name": "session-pult",
   "version": "0.12.0",
-  "description": "Пульт сессий: лимиты, контекст, расход за день, активные сессии и агенты в панели сбоку",
+  "description": "Session control panel: usage limits, context, forecasts, active sessions and agents in a side pane (EN/RU)",
+  "author": { "name": "denilis", "url": "https://github.com/denilis" },
+  "homepage": "https://github.com/denilis/claude-session-pult",
+  "repository": "https://github.com/denilis/claude-session-pult",
+  "license": "MIT",
+  "keywords": ["usage", "limits", "context", "sessions", "monitor", "mod", "pane"],
   "types": "./types/index.d.ts"
 }

@@ -1,5 +1,14 @@
 {
   "name": "claude-session-pult",
-  "owner": { "name": "denilis" },
-  "plugins": [{ "name": "session-pult", "source": "./" }]
+  "description": "Session Pult: a side panel for Claude Code with usage limits, context and sessions",
+  "owner": {
+    "name": "denilis"
+  },
+  "plugins": [
+    {
+      "name": "session-pult",
+      "source": "./",
+      "description": "Session control panel: usage limits, context, forecasts, active sessions and agents in a side pane (EN/RU)"
+    }
+  ]
 }

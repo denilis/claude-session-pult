@@ -1,66 +1,100 @@
-# Пульт сессий для Claude Code
+# Session Pult for Claude Code
 
-Панель рядом с чатом Claude. На ней видно, сколько осталось от лимитов, сколько места занимает контекст, какие сессии работают и какие ждут вашего ответа. Написал ее для себя, когда параллельных сессий стало больше пяти и лимит начал кончаться раньше времени.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Claude Code mod](https://img.shields.io/badge/Claude%20Code-mod-d97757.svg)](https://code.claude.com/docs/en/plugins/mods)
 
-## Установка
+[Русская версия](README.ru.md)
 
-Откройте Claude Code в терминале и введите:
+A control panel that sits next to your Claude chat. It shows how much of your 5-hour and weekly limits you have used, how full this session's context is, and which of your sessions are running, which are waiting for you, and which are about to lose their prompt cache.
+
+I built it for myself once I had more than five sessions running in parallel and my limit kept running out before the reset. "Pult" is Russian for a control panel.
+
+## Install
+
+Open Claude Code in a terminal and run:
 
 ```
 /plugin install session-pult --marketplace denilis/claude-session-pult
 ```
 
-На вопрос о новом маркетплейсе ответьте `y`, затем выберите, где ставить. Откройте новую сессию: пульт появится справа. Если панели нет, наберите `/pult`.
+Answer `y` when asked about the new marketplace, then choose **Install for you** (user scope), so the panel also shows up in the Claude desktop app. Start a new session and the panel appears on the right. If it doesn't, type `/pult`.
 
-Если вы ставили пульт раньше из архива, сначала удалите папку `%USERPROFILE%\.claude\skills\session-pult`, иначе загрузятся два пульта.
+The panel starts in Russian. Press **EN** in the top row; the choice is saved for all sessions. Switch before using Compact or the prompt buttons: they send their instructions in the panel language, and the compaction summary is written in it.
 
-## Что нужно
+## Requirements
 
-- Claude Code: приложение Claude для Windows (вкладка Code) или терминал.
-- Python 3 для графиков по всем сессиям. Без него работают кольца лимитов и кнопки.
-- Windows. На Mac пульт тоже запустится, но уведомления будут только внутри Claude, а строки сессий не будут открываться нажатием.
+- Claude Code 2.1.287 or later in the terminal, or the Claude desktop app (Code tab), where mods work from 2.1.286.
+- A Claude subscription. The panel is built around its 5-hour and weekly limits and its one-hour prompt cache; with an API key the cache usually lives 5 minutes.
+- Python 3 for the session list, the charts and the speed test. Without it, the limit rings and the buttons still work.
+- Windows. On macOS the panel runs too, but notifications stay inside Claude and session rows don't open on click.
 
-## Что на панели
+## What's on the panel
 
-Вверху кнопки оформления (кремовое, золотое, фиолетовое), языка (русский, английский) и настройки блоков. Оформление, язык и расстановка запоминаются для всех сессий.
+The top row has buttons for the theme (Ivory, Gold, Violet), the language (RU, EN) and the block layout. All three are remembered across sessions.
 
-Блоки можно расставить по-своему. Нажмите значок с четырьмя квадратами вверху справа: над каждым блоком появятся стрелки вверх и вниз, кнопки свернуть и закрыть. Свернутый блок остается полоской с названием, нажатие разворачивает его. Закрытые блоки возвращаются кнопками внизу панели, там же кнопки «Как было» и «Готово». Перетаскивать блоки мышью приложение не позволяет. Расстановка запоминается для всех сессий.
+You can rearrange the blocks. Press the four-squares icon in the top right corner: each block gets up and down arrows, a collapse button and a close button. A collapsed block stays as a strip with its name; click it to expand. Closed blocks come back through buttons at the bottom of the panel, next to Reset and Done. The app doesn't support drag and drop, so it's arrows only.
 
-Кольца показывают пятичасовой лимит, недельный лимит и контекст этой сессии. Под ними кнопки:
+Three rings show the 5-hour limit, the weekly limit and this session's context. Below them:
 
-- **Сжать контекст.** Сводка сохраняет цель, решения и пути к файлам.
-- **Статус, Итог, Проверка.** Готовые просьбы к Claude: что сделано, итог по задаче, проверка результата перед отправкой.
+- **Compact** shrinks the context into a summary that keeps the goal, the decisions and the file paths.
+- **Status, Report, Check** are one-click prompts to Claude: what has been done, a wrap-up of the task, a check of the result before you send it anywhere.
 
-Справа от кнопок квадрат со скоростью загрузки на шкале. Замер идет раз в 30 минут и по кнопке «Обновить», один на все сессии, и тратит до 12 МБ трафика.
+Next to the buttons, a small gauge shows your download speed. One measurement serves all sessions: it runs every 30 minutes and when you press Refresh, and uses up to 12 MB.
 
-Команда `/new-sheet` начинает с чистого листа: Claude записывает память проекта в `PROJECT_MEMORY.md`, контекст очищается, затем Claude читает память и одной строкой говорит, на чем остановились.
+`/new-sheet` gives you a clean slate: Claude writes the project memory to `PROJECT_MEMORY.md`, the context is cleared, then Claude reads the memory back and tells you in one line where you left off.
 
-Ниже прогнозы, когда кончатся пятичасовой и недельный лимиты, список сегодняшних сессий, расход по часам и доля каждой модели.
+Further down: forecasts of when the 5-hour and weekly limits will run out, today's sessions, usage by hour and each model's share.
 
-## Широкая панель
+## Wide panel
 
-Панель подстраивается под ширину. В узкой все блоки идут одной колонкой. Если расширить панель примерно до 600 точек, блоки встают в две колонки, от 950 точек в три. Кольца лимитов вместе со скоростью интернета и четыре кнопки тянутся на всю ширину, остальные блоки идут в вашем порядке, каждый в ту колонку, что короче. Шрифт и кольца при этом остаются прежнего размера. Если поменять только высоту панели, раскладка не меняется. Колонки есть только в приложении Claude для Windows и Mac, в терминале и VS Code панель как раньше.
+The layout follows the panel's width. A narrow panel shows one column. At about 600 px the blocks move into two columns, at about 950 px into three. The limit rings with the speed gauge and the four buttons span the full width; the other blocks keep your order, each going into the shorter column. Font and rings stay the same size, and changing only the panel height doesn't change the layout. Columns work in the Claude desktop app for Windows and macOS; in the terminal and VS Code the panel stays a single column.
 
-## Строка сессии
+## Session rows
 
-Строка сессии нажимается целиком: сессия откроется в приложении Claude, на это указывает прямоугольник со знаком Enter справа. Отвечают уже в самом чате. Цвет строки показывает статус: красный значит нужны вы (задан вопрос, сессия уперлась в лимит или кэш вот-вот остынет), желтый ждет, зеленый работает, серый остановлена.
+Click a session row to open it in the Claude app (that's what the Enter badge on the right means). This works for sessions started in the app; terminal sessions show their status instead. You reply in the chat itself.
 
-- Под сессией, которая ждет вас, написано, чего она ждет.
-- Сессии, у которых кэш остынет меньше чем через 15 минут, поднимаются наверх, рядом цена опоздания в процентах лимита.
+The row color shows the status. The colors below are for the default Gold theme; Ivory and Violet use their own palette.
 
-## Что пульт делает сам
+- **Red**: needs you. It asked a question, hit a limit, or its cache is about to go cold
+- **Yellow**: waiting
+- **Green**: running
+- **Gray**: stopped
 
-- Предупреждает об остывшем кэше. После часа перерыва следующий ответ перечитывает весь контекст по полной цене. За 15 минут до этого над полем ввода появляется полоса с кнопкой «Сжать».
-- Переводит агентов без своей модели с Opus на Sonnet.
-- Присылает уведомление, когда лимит прошел 80% и когда по прогнозу кончится раньше сброса.
-- Сообщает, что другая сессия закончила работу, пока вы заняты в Claude. Нажмите на уведомление, и она откроется. Когда окно свернуто, такое уведомление показывает само приложение.
+A session that waits for you shows what it is waiting for. Sessions with a context over 100K tokens whose cache goes cold in less than 15 minutes move to the top, with the cost of being late shown as a percentage of your limit.
 
-## Данные и расход
+## What it does on its own
 
-Пульт считает все на вашем компьютере: читает журналы сессий в `~/.claude/projects` и файлы сессий приложения. Никуда их не отправляет. В интернет пульт выходит только для замера скорости: скачивает пробный файл у Cloudflare. Токены тратятся, только когда вы нажимаете кнопку с просьбой к Claude.
+- **Warns before the cache goes cold.** On a Claude subscription the prompt cache lives for an hour: after an hour of silence, the next reply re-reads the whole context at full price. If the context is over 100K tokens, a bar with a Compact button appears above the prompt fifteen minutes before that.
+- **Moves agents to Sonnet.** When the main session runs on Opus, built-in subagents and your own agents in `~/.claude/agents` that don't set a model run on Sonnet instead.
+- **Notifies you** when a limit passes 80% and when the forecast says it will run out before the reset.
+- **Tells you when another session finishes a reply** and is waiting for you while you are busy in Claude. Click the notification to open it. When the window is minimized, the app shows the notification itself.
 
-## Удаление
+## Data and privacy
+
+Everything is computed on your computer: the panel reads session logs in `~/.claude/projects` and the app's session files, and sends nothing anywhere. The only network access is the speed test, which downloads a test file from Cloudflare. It runs Python (session list, charts, speed test), PowerShell (Windows notifications) and rundll32 (opening sessions), and keeps a small cache in `~/.claude/cache/session-pult.json`.
+
+The panel spends tokens only when you ask it to: the Compact, Status, Report and Check buttons and `/new-sheet`.
+
+## Session Pult and claude-monitor
+
+[Claude Code Usage Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor) (`claude-monitor`) is a popular terminal tool for tracking usage. The two solve different problems (compared with claude-monitor 4.0.0):
+
+- Session Pult is a panel next to the chat, made for the Claude desktop app. claude-monitor is a terminal app you run in a separate window, on Windows, macOS and Linux.
+- Session Pult shows the 5-hour and weekly limits as the app reports them. By default claude-monitor estimates limits from your own history; official figures need its statusline hook or an opt-in API call.
+- Session Pult tracks live sessions (running, waiting, needs you) and warns before the prompt cache goes cold. claude-monitor has what the panel doesn't: cost in dollars, burn rate in tokens and dollars per minute, daily and monthly reports, JSON and CSV export.
+
+If you live in the terminal and want cost reports, claude-monitor is the better fit. If you run several sessions in the Claude app, try the panel. The two can run side by side.
+
+## Uninstall
 
 ```
 /plugin uninstall session-pult
 ```
+
+## Feedback
+
+Bugs and ideas are welcome in [Issues](https://github.com/denilis/claude-session-pult/issues). If the panel is useful to you, a star helps other people find it.
+
+## License
+
+[MIT](LICENSE)

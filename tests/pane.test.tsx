@@ -29,7 +29,7 @@ const SNAPSHOT = {
   appInFront: true,
   sessions: [
     { id: '14815d4b', title: 'Тестовый проект А', project: 'Проект-А', link: 'claude://claude.ai/epitaxy/local_14815d4b-0000-0000-0000-000000000000', note: null, needs: false, doneAt: NOW, seen: true, status: 'running', idleMin: 0, ctx: 356_000, agents: 2, units: 14_900_000, coldPct: null, coldInMin: null, urgent: false },
-    { id: '0b67965a', title: 'Тестовый кейс & <пациент>', project: 'Кейс', link: LINK, note: 'Доделать его в этой же папке?', needs: true, doneAt: NOW - 300_000, seen: true, status: 'waiting', idleMin: 5, ctx: 120_000, agents: 0, units: 2_000_000, coldPct: null, coldInMin: null, urgent: false },
+    { id: '0b67965a', title: 'Тестовый кейс & <клиент>', project: 'Кейс', link: LINK, note: 'Доделать его в этой же папке?', needs: true, doneAt: NOW - 300_000, seen: true, status: 'waiting', idleMin: 5, ctx: 120_000, agents: 0, units: 2_000_000, coldPct: null, coldInMin: null, urgent: false },
     // Сессия из терминала: ссылки нет, статус нарисован на картинке
     { id: 'a97eb71a', title: 'Тестовый проект В', project: 'Проект-В', link: null, note: null, needs: false, doneAt: NOW - 19_560_000, seen: true, status: 'stopped', idleMin: 326, ctx: 517_000, agents: 0, units: 0, coldPct: 3.5, coldInMin: null, urgent: false },
   ],
@@ -94,8 +94,8 @@ test('пульт рисует кольца, прогноз, сессии раз�
     expect(rowA?.source).toContain('rx="2" fill="#7FBF8E"')
     expect(rowCase?.source).toContain('rx="2" fill="#E5604D"')
     expect(rowB?.source).toContain('rx="2" fill="#9A938A"')
-    expect(rowCase?.source).toContain('Тестовый кейс &amp; &lt;пациент&gt;')
-    expect(rowCase?.alt).toBe('Тестовый кейс & <пациент>: ждёт вас, 5 мин, контекст 120 тыс.')
+    expect(rowCase?.source).toContain('Тестовый кейс &amp; &lt;клиент&gt;')
+    expect(rowCase?.alt).toBe('Тестовый кейс & <клиент>: ждёт вас, 5 мин, контекст 120 тыс.')
     expect(rowB?.source).toContain('❄ 3,5%')
     // Строка шириной с карточки: со ссылкой справа знак Enter, без ссылки статус подписан на картинке
     expect(rowA?.source).toContain('viewBox="0 0 320 44"')
